@@ -141,6 +141,11 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 
       <div class="section hidden" id="segTools">
         <h3>Polygon tools</h3>
+        <label class="small">Polygon drawing</label>
+        <select id="polyDrawMode" style="width:100%;margin:4px 0 7px">
+          <option value="click">Click vertices</option>
+          <option value="drag">Freehand drag</option>
+        </select>
         <div class="row">
           <button id="finishPolyBtn" class="grow">Finish polygon</button>
           <button id="addVertexBtn" class="grow">Add vertex</button>
@@ -154,7 +159,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
         <button id="simplifyAllBtn" style="width:100%;margin-top:6px">Simplify all polygons</button>
         <button id="mergeBtn" style="width:100%;margin-top:6px">Merge selected polygons</button>
         <button id="containedBtn" style="width:100%;margin-top:6px">Delete contained polygons</button>
-        <div class="small" style="margin-top:6px">
+        <div id="polyDrawHint" class="small" style="margin-top:6px">
           New polygon: click vertices, then double-click, press Enter, or use Finish polygon.
         </div>
       </div>
@@ -258,7 +263,8 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
     <b>Q/A / E/D / ←/→</b> = previous/next image · <b>4/6/8/2</b> = translate all annotations 1 px<br>
     <b>Y</b> = run LiteRT YOLO · <b>Alt+click</b> = add best prediction containing the point<br><br>
     <b>Detection:</b> <b>N</b> = new box, then drag · drag yellow corner handles = resize<br>
-    <b>Segmentation:</b> <b>N</b> = new polygon · click vertices · <b>Enter</b>/double-click = finish · <b>Esc</b> = cancel<br>
+    <b>Segmentation:</b> choose <b>Click vertices</b> or <b>Freehand drag</b> · <b>N</b> = new polygon<br>
+    Click mode: place vertices, <b>Enter</b>/double-click = finish · Drag mode: hold and draw, release = finish · <b>Esc</b> = cancel<br>
     Click a polygon vertex to select/drag it · <b>Insert/I</b> = insert vertex · <b>Backspace</b> = delete selected vertex.
   </div>
   <div class="row" style="justify-content:flex-end;margin-top:12px"><button id="closeHelpBtn">Close</button></div>
@@ -281,7 +287,8 @@ const els={
  saveBtn:$("saveBtn"),saveAnnotatedBtn:$("saveAnnotatedBtn"),undoBtn:$("undoBtn"),helpBtn:$("helpBtn"),
  imageList:$("imageList"),prevBtn:$("prevBtn"),nextBtn:$("nextBtn"),jumpInput:$("jumpInput"),
  classSelect:$("classSelect"),annotationHeading:$("annotationHeading"),addBoxBtn:$("addBoxBtn"),deleteBtn:$("deleteBtn"),copyBtn:$("copyBtn"),pasteBtn:$("pasteBtn"),
- segTools:$("segTools"),finishPolyBtn:$("finishPolyBtn"),addVertexBtn:$("addVertexBtn"),deleteVertexBtn:$("deleteVertexBtn"),
+ segTools:$("segTools"),polyDrawMode:$("polyDrawMode"),polyDrawHint:$("polyDrawHint"),
+ finishPolyBtn:$("finishPolyBtn"),addVertexBtn:$("addVertexBtn"),deleteVertexBtn:$("deleteVertexBtn"),
  simplifyBtn:$("simplifyBtn"),simplifyAllBtn:$("simplifyAllBtn"),mergeBtn:$("mergeBtn"),containedBtn:$("containedBtn"),
  simplifyTol:$("simplifyTol"),simplifyVal:$("simplifyVal"),
  autoSave:$("autoSave"),showConf:$("showConf"),dedupeBtn:$("dedupeBtn"),deleteAllBtn:$("deleteAllBtn"),
@@ -322,6 +329,7 @@ let mode="select"; // select | add | polyAdd
 let draftPolygon=[];
 let draftCursor=null;
 let draftUndoPushed=false;
+let freehandDrawing=false;
 let drag=null,marquee=null,pan=null;
 let fitScale=1,zoom=1,offsetX=0,offsetY=0;
 let currentModelFile=null;
@@ -351,7 +359,8 @@ function savePrefs(){
   localStorage.setItem("avaw_annotator_browser",JSON.stringify({
     classNames,classColors,projectMode,
     autoSave:els.autoSave.checked,showConf:els.showConf.checked,
-    conf:+els.conf.value,iou:+els.iou.value,simplifyTol:+els.simplifyTol.value
+    conf:+els.conf.value,iou:+els.iou.value,simplifyTol:+els.simplifyTol.value,
+    polyDrawMode:els.polyDrawMode.value
   }));
 }
 function loadPrefs(){
@@ -366,6 +375,7 @@ function loadPrefs(){
     if(p.conf)els.conf.value=p.conf;
     if(p.iou)els.iou.value=p.iou;
     if(Number.isFinite(+p.simplifyTol))els.simplifyTol.value=+p.simplifyTol;
+    if(p.polyDrawMode==="drag"||p.polyDrawMode==="click")els.polyDrawMode.value=p.polyDrawMode;
   }catch{regenColors()}
 }
 loadPrefs();
@@ -377,6 +387,7 @@ function objectWord(plural=false){
 function cancelDraftPolygon(removeUndo=true){
   if(removeUndo&&draftUndoPushed&&undoStack.length)undoStack.pop();
   draftUndoPushed=false;
+  freehandDrawing=false;
   draftPolygon=[];
   draftCursor=null;
   if(mode==="polyAdd")mode="select";
@@ -396,6 +407,17 @@ function updateTaskUI(){
     ?"Alt-click: low-threshold inference and add the best detected box containing that point."
     :"Alt-click: run segmentation and add the best predicted polygon containing that point.";
   els.simplifyVal.textContent=String(+els.simplifyTol.value);
+  updatePolygonDrawHint();
+}
+function updatePolygonDrawHint(){
+  if(!els.polyDrawHint)return;
+  if(els.polyDrawMode.value==="drag"){
+    els.polyDrawHint.textContent="New polygon: press and drag around the object; releasing the mouse finishes the polygon.";
+    els.finishPolyBtn.disabled=true;
+  }else{
+    els.polyDrawHint.textContent="New polygon: click vertices, then double-click, press Enter, or use Finish polygon.";
+    els.finishPolyBtn.disabled=false;
+  }
 }
 function setProjectMode(next,{force=false,silent=false}={}){
   if(next!=="detect"&&next!=="segment")return false;
@@ -739,9 +761,11 @@ function toggleAddMode(){
     if(mode==="polyAdd"){
       cancelDraftPolygon(true);status("New-polygon mode cancelled.");
     }else{
-      mode="polyAdd";draftPolygon=[];draftCursor=null;draftUndoPushed=false;
+      mode="polyAdd";draftPolygon=[];draftCursor=null;draftUndoPushed=false;freehandDrawing=false;
       els.addBoxBtn.classList.add("active");
-      status("New polygon: click vertices; double-click or press Enter to finish.");
+      status(els.polyDrawMode.value==="drag"
+        ?"New polygon: press and drag around the object; release to finish."
+        :"New polygon: click vertices; double-click or press Enter to finish.");
       requestDraw();
     }
   }
@@ -750,6 +774,14 @@ els.addBoxBtn.onclick=toggleAddMode;
 els.showConf.onchange=()=>{savePrefs();requestDraw()};
 els.autoSave.onchange=savePrefs;
 els.simplifyTol.oninput=()=>{els.simplifyVal.textContent=String(+els.simplifyTol.value);savePrefs()};
+els.polyDrawMode.onchange=()=>{
+  if(mode==="polyAdd"&&draftPolygon.length)cancelDraftPolygon(true);
+  updatePolygonDrawHint();
+  savePrefs();
+  status(els.polyDrawMode.value==="drag"
+    ?"Polygon drawing: Freehand drag."
+    :"Polygon drawing: Click vertices.");
+};
 
 document.querySelectorAll("[data-shift]").forEach(b=>b.onclick=()=>{
   const [dx,dy]=b.dataset.shift.split(",").map(Number);translateAll(dx,dy);
@@ -965,9 +997,30 @@ function normalizeBox(a,r){
 function movePolygonInPlace(a,dx,dy,r){
   for(let i=1;i<a.length;i+=2){a[i]=clamp(a[i]+dx,0,r.width);a[i+1]=clamp(a[i+1]+dy,0,r.height)}
 }
+function cleanDraftPolygonPoints(points){
+  if(!points.length)return [];
+  const minCanvasDistance=2.5;
+  const scale=Math.max(.001,fitScale*zoom);
+  const minImageDistance=minCanvasDistance/scale;
+  const out=[points[0]];
+  for(let i=1;i<points.length;i++){
+    const p=points[i],q=out[out.length-1];
+    if(Math.hypot(p.x-q.x,p.y-q.y)>=minImageDistance)out.push(p);
+  }
+  if(out.length>2){
+    const first=out[0],last=out[out.length-1];
+    if(Math.hypot(first.x-last.x,first.y-last.y)<minImageDistance)out.pop();
+  }
+  return out;
+}
 function finalizeDraftPolygon(){
   const r=rec();if(projectMode!=="segment"||mode!=="polyAdd"||!r)return;
-  if(draftPolygon.length<3){status("A polygon needs at least 3 vertices.");return}
+  draftPolygon=cleanDraftPolygonPoints(draftPolygon);
+  if(draftPolygon.length<3){
+    status("A polygon needs at least 3 distinct vertices.");
+    if(els.polyDrawMode.value==="drag")cancelDraftPolygon(true);
+    return;
+  }
   if(!draftUndoPushed)pushUndo();
   const a=[+els.classSelect.value];
   for(const p of draftPolygon)a.push(clamp(p.x,0,r.width),clamp(p.y,0,r.height));
@@ -1096,10 +1149,18 @@ els.canvas.onpointerdown=async ev=>{
   if(ev.altKey){await singleClickPrediction(ip.x,ip.y);return}
 
   if(projectMode==="segment"&&mode==="polyAdd"){
-    if(ev.detail>=2){finalizeDraftPolygon();return}
     if(!draftUndoPushed){pushUndo();draftUndoPushed=true}
-    draftPolygon.push({x:clamp(ip.x,0,r.width),y:clamp(ip.y,0,r.height)});
-    draftCursor=ip;requestDraw();return;
+    const q={x:clamp(ip.x,0,r.width),y:clamp(ip.y,0,r.height)};
+    if(els.polyDrawMode.value==="drag"){
+      freehandDrawing=true;
+      draftPolygon=[q];
+      draftCursor=q;
+      drag={type:"polyFreehand",lastCanvas:p,last:q};
+    }else{
+      draftPolygon.push(q);
+      draftCursor=q;
+    }
+    requestDraw();return;
   }
   if(projectMode==="detect"&&mode==="add"){
     pushUndo();drag={type:"new",sx:p.x,sy:p.y,cx:p.x,cy:p.y,startImg:ip};return;
@@ -1135,10 +1196,22 @@ els.canvas.onpointerdown=async ev=>{
 els.canvas.onpointermove=ev=>{
   const r=rec();if(!r)return;
   const p=canvasPoint(ev),ip=imagePointFromCanvas(p.x,p.y);
-  if(projectMode==="segment"&&mode==="polyAdd"){draftCursor=ip;requestDraw()}
+  if(projectMode==="segment"&&mode==="polyAdd"){
+    draftCursor=ip;
+    if(freehandDrawing&&drag?.type==="polyFreehand"){
+      const last=drag.lastCanvas;
+      if(!last||Math.hypot(p.x-last.x,p.y-last.y)>=3){
+        draftPolygon.push({x:clamp(ip.x,0,r.width),y:clamp(ip.y,0,r.height)});
+        drag.lastCanvas=p;
+        drag.last=ip;
+      }
+    }
+    requestDraw();
+  }
   if(pan){offsetX=pan.ox+(p.x-pan.x);offsetY=pan.oy+(p.y-pan.y);requestDraw();return}
   if(marquee){marquee.x2=p.x;marquee.y2=p.y;requestDraw();return}
   if(!drag)return;
+  if(drag.type==="polyFreehand")return;
   if(drag.type==="new"){drag.cx=p.x;drag.cy=p.y;requestDraw();return}
   const dx=ip.x-drag.last.x,dy=ip.y-drag.last.y;
 
@@ -1178,6 +1251,12 @@ els.canvas.onpointerup=ev=>{
     }
     marquee=null;requestDraw();renderBoxList();return;
   }
+  if(projectMode==="segment"&&freehandDrawing&&drag?.type==="polyFreehand"){
+    freehandDrawing=false;
+    drag=null;
+    finalizeDraftPolygon();
+    return;
+  }
   if(!drag)return;
   if(projectMode==="detect"&&drag.type==="new"){
     const p=canvasPoint(ev),a=drag.startImg,b=imagePointFromCanvas(p.x,p.y);
@@ -1191,6 +1270,13 @@ els.canvas.onpointerup=ev=>{
   }
   drag=null;refreshAll();
 };
+els.canvas.ondblclick=ev=>{
+  if(projectMode!=="segment"||mode!=="polyAdd"||els.polyDrawMode.value!=="click")return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  finalizeDraftPolygon();
+};
+
 els.canvas.onwheel=ev=>{
   if(!rec())return;ev.preventDefault();
   const p=canvasPoint(ev),before=imagePointFromCanvas(p.x,p.y),factor=ev.deltaY<0?1.1:0.9;
@@ -1260,7 +1346,9 @@ window.addEventListener("keydown",ev=>{
     return;
   }
   if(k==="escape"&&projectMode==="segment"&&mode==="polyAdd"){cancelDraftPolygon(true);status("New polygon cancelled.");return}
-  if(k==="enter"&&projectMode==="segment"&&mode==="polyAdd"){ev.preventDefault();finalizeDraftPolygon();return}
+  if(k==="enter"&&projectMode==="segment"&&mode==="polyAdd"&&els.polyDrawMode.value==="click"){
+    ev.preventDefault();finalizeDraftPolygon();return
+  }
   if((k==="insert"||k==="i")&&projectMode==="segment"){ev.preventDefault();addVertex();return}
   if(k==="n"){els.addBoxBtn.click();return}
   if(k==="s"){saveCurrent();return}
