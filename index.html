@@ -92,7 +92,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 <body>
 <div class="app">
   <div class="topbar">
-    <div class="brand">AVAW Annotator · LiteRT</div>
+    <div class="brand">AVAW Annotator · LiteRT <span class="badge">Build 2026-10-07c</span></div>
     <label class="small" for="taskMode">Task</label>
     <select id="taskMode" title="Annotation format for the current dataset">
       <option value="detect">Detection · BBOX</option>
@@ -141,11 +141,12 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 
       <div class="section hidden" id="segTools">
         <h3>Polygon tools</h3>
-        <label class="small">Polygon drawing</label>
-        <select id="polyDrawMode" style="width:100%;margin:4px 0 7px">
-          <option value="click">Click vertices</option>
-          <option value="drag">Freehand drag</option>
-        </select>
+        <label class="small">Polygon drawing mode</label>
+        <div id="polyDrawToggle" class="row" style="margin:4px 0 8px">
+          <button id="polyClickModeBtn" class="grow active" type="button">Click points</button>
+          <button id="polyDragModeBtn" class="grow" type="button">Drag / freehand</button>
+        </div>
+        <input id="polyDrawMode" type="hidden" value="click">
         <div class="row">
           <button id="finishPolyBtn" class="grow">Finish polygon</button>
           <button id="addVertexBtn" class="grow">Add vertex</button>
@@ -288,6 +289,7 @@ const els={
  imageList:$("imageList"),prevBtn:$("prevBtn"),nextBtn:$("nextBtn"),jumpInput:$("jumpInput"),
  classSelect:$("classSelect"),annotationHeading:$("annotationHeading"),addBoxBtn:$("addBoxBtn"),deleteBtn:$("deleteBtn"),copyBtn:$("copyBtn"),pasteBtn:$("pasteBtn"),
  segTools:$("segTools"),polyDrawMode:$("polyDrawMode"),polyDrawHint:$("polyDrawHint"),
+ polyClickModeBtn:$("polyClickModeBtn"),polyDragModeBtn:$("polyDragModeBtn"),
  finishPolyBtn:$("finishPolyBtn"),addVertexBtn:$("addVertexBtn"),deleteVertexBtn:$("deleteVertexBtn"),
  simplifyBtn:$("simplifyBtn"),simplifyAllBtn:$("simplifyAllBtn"),mergeBtn:$("mergeBtn"),containedBtn:$("containedBtn"),
  simplifyTol:$("simplifyTol"),simplifyVal:$("simplifyVal"),
@@ -330,6 +332,10 @@ let draftPolygon=[];
 let draftCursor=null;
 let draftUndoPushed=false;
 let freehandDrawing=false;
+let lastPolyClickTime=0;
+let lastPolyClickCanvas=null;
+const POLY_DOUBLE_CLICK_MS=420;
+const POLY_DOUBLE_CLICK_PX=12;
 let drag=null,marquee=null,pan=null;
 let fitScale=1,zoom=1,offsetX=0,offsetY=0;
 let currentModelFile=null;
@@ -388,6 +394,8 @@ function cancelDraftPolygon(removeUndo=true){
   if(removeUndo&&draftUndoPushed&&undoStack.length)undoStack.pop();
   draftUndoPushed=false;
   freehandDrawing=false;
+  lastPolyClickTime=0;
+  lastPolyClickCanvas=null;
   draftPolygon=[];
   draftCursor=null;
   if(mode==="polyAdd")mode="select";
@@ -411,11 +419,14 @@ function updateTaskUI(){
 }
 function updatePolygonDrawHint(){
   if(!els.polyDrawHint)return;
-  if(els.polyDrawMode.value==="drag"){
-    els.polyDrawHint.textContent="New polygon: press and drag around the object; releasing the mouse finishes the polygon.";
+  const dragMode=els.polyDrawMode.value==="drag";
+  els.polyClickModeBtn.classList.toggle("active",!dragMode);
+  els.polyDragModeBtn.classList.toggle("active",dragMode);
+  if(dragMode){
+    els.polyDrawHint.textContent="Drag / freehand: press and hold the left mouse button, trace the boundary, then release to finish.";
     els.finishPolyBtn.disabled=true;
   }else{
-    els.polyDrawHint.textContent="New polygon: click vertices, then double-click, press Enter, or use Finish polygon.";
+    els.polyDrawHint.textContent="Click points: click polygon vertices. Double-click the final point, press Enter, or use Finish polygon.";
     els.finishPolyBtn.disabled=false;
   }
 }
@@ -762,6 +773,7 @@ function toggleAddMode(){
       cancelDraftPolygon(true);status("New-polygon mode cancelled.");
     }else{
       mode="polyAdd";draftPolygon=[];draftCursor=null;draftUndoPushed=false;freehandDrawing=false;
+      lastPolyClickTime=0;lastPolyClickCanvas=null;
       els.addBoxBtn.classList.add("active");
       status(els.polyDrawMode.value==="drag"
         ?"New polygon: press and drag around the object; release to finish."
@@ -774,14 +786,18 @@ els.addBoxBtn.onclick=toggleAddMode;
 els.showConf.onchange=()=>{savePrefs();requestDraw()};
 els.autoSave.onchange=savePrefs;
 els.simplifyTol.oninput=()=>{els.simplifyVal.textContent=String(+els.simplifyTol.value);savePrefs()};
-els.polyDrawMode.onchange=()=>{
+function setPolygonDrawMode(next){
+  if(next!=="click"&&next!=="drag")return;
   if(mode==="polyAdd"&&draftPolygon.length)cancelDraftPolygon(true);
+  els.polyDrawMode.value=next;
+  lastPolyClickTime=0;
+  lastPolyClickCanvas=null;
   updatePolygonDrawHint();
   savePrefs();
-  status(els.polyDrawMode.value==="drag"
-    ?"Polygon drawing: Freehand drag."
-    :"Polygon drawing: Click vertices.");
-};
+  status(next==="drag" ? "Polygon drawing: Drag / freehand." : "Polygon drawing: Click points.");
+}
+els.polyClickModeBtn.onclick=()=>setPolygonDrawMode("click");
+els.polyDragModeBtn.onclick=()=>setPolygonDrawMode("drag");
 
 document.querySelectorAll("[data-shift]").forEach(b=>b.onclick=()=>{
   const [dx,dy]=b.dataset.shift.split(",").map(Number);translateAll(dx,dy);
@@ -1156,9 +1172,26 @@ els.canvas.onpointerdown=async ev=>{
       draftPolygon=[q];
       draftCursor=q;
       drag={type:"polyFreehand",lastCanvas:p,last:q};
+      lastPolyClickTime=0;
+      lastPolyClickCanvas=null;
     }else{
+      const now=performance.now();
+      const isSecondClick=
+        lastPolyClickCanvas!==null &&
+        (now-lastPolyClickTime)<=POLY_DOUBLE_CLICK_MS &&
+        Math.hypot(p.x-lastPolyClickCanvas.x,p.y-lastPolyClickCanvas.y)<=POLY_DOUBLE_CLICK_PX;
+
+      if(isSecondClick && draftPolygon.length>=3){
+        lastPolyClickTime=0;
+        lastPolyClickCanvas=null;
+        finalizeDraftPolygon();
+        return;
+      }
+
       draftPolygon.push(q);
       draftCursor=q;
+      lastPolyClickTime=now;
+      lastPolyClickCanvas={x:p.x,y:p.y};
     }
     requestDraw();return;
   }
@@ -1274,7 +1307,7 @@ els.canvas.ondblclick=ev=>{
   if(projectMode!=="segment"||mode!=="polyAdd"||els.polyDrawMode.value!=="click")return;
   ev.preventDefault();
   ev.stopPropagation();
-  finalizeDraftPolygon();
+  if(draftPolygon.length>=3)finalizeDraftPolygon();
 };
 
 els.canvas.onwheel=ev=>{
@@ -1773,7 +1806,7 @@ setSaveDirectory(null);
 updateTaskUI();
 resizeCanvas();refreshAll();
 setModelState("idle","Select one .tflite file.");
-status("Ready. Choose Detection or Segmentation, then open a working folder.");
+status("Ready · Build 2026-10-07c. Choose Detection or Segmentation, then open a working folder.");
 </script>
 </body>
 </html>
