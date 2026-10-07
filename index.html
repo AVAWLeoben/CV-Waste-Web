@@ -1,0 +1,1186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Browser-based YOLO bounding-box annotation with LiteRT/WebGPU inference.">
+<title>AVAW CVAT BBOX — LiteRT Browser Edition</title>
+<style>
+:root{
+  --bg:#0e1116;--panel:#171b22;--panel2:#202630;--border:#303947;
+  --text:#edf2f7;--muted:#9aa5b5;--accent:#38bdf8;--ok:#22c55e;
+  --warn:#f59e0b;--bad:#ef4444;--sel:#facc15
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;overflow:hidden}
+button,select,input,textarea{font:inherit}
+button,select,input[type=text],input[type=number],textarea{
+  background:#272e39;color:var(--text);border:1px solid var(--border);border-radius:7px
+}
+button{padding:7px 10px;cursor:pointer}button:hover{filter:brightness(1.12)}
+button.primary{background:#075985;border-color:#0ea5e9}
+button.active{background:#854d0e;border-color:#f59e0b}
+button.danger{background:#531b1b;border-color:#7f1d1d}
+input[type=range]{width:100%}
+.app{height:100vh;display:grid;grid-template-rows:auto 1fr auto;min-height:0}
+.topbar{
+  display:flex;align-items:center;gap:7px;padding:8px 10px;background:#12161d;
+  border-bottom:1px solid var(--border);flex-wrap:wrap
+}
+.brand{font-weight:800;margin-right:8px;white-space:nowrap}
+.spacer{flex:1}
+.main{display:grid;grid-template-columns:220px minmax(0,1fr) 300px;min-height:0}
+.sidebar{background:var(--panel);border-right:1px solid var(--border);min-height:0;overflow:auto;padding:9px}
+.right{border-right:0;border-left:1px solid var(--border)}
+.section{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:9px;margin-bottom:9px}
+.section h3{font-size:12px;margin:0 0 8px;color:#cbd5e1;text-transform:uppercase;letter-spacing:.04em}
+.row{display:flex;gap:6px;align-items:center;margin:6px 0}
+.row>*{min-width:0}.grow{flex:1}
+.small{font-size:11px;color:var(--muted);line-height:1.4}
+.stageWrap{position:relative;min-width:0;min-height:0;background:#050608;overflow:hidden}
+#canvas{width:100%;height:100%;display:block;touch-action:none;cursor:default}
+.loading{
+ position:absolute;inset:0;display:none;align-items:center;justify-content:center;z-index:8;
+ background:rgba(2,6,23,.38);backdrop-filter:blur(1px);pointer-events:none
+}
+.loading.show{display:flex}
+.loadCard{background:rgba(12,18,29,.9);border:1px solid #4b5563;border-radius:13px;padding:17px 22px;text-align:center;min-width:260px}
+.spinner{width:45px;height:45px;border:5px solid rgba(255,255,255,.17);border-top-color:var(--accent);border-radius:50%;margin:0 auto 12px;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#contextMenu{
+ position:fixed;display:none;z-index:30;min-width:170px;background:#1d2430;border:1px solid #475569;
+ border-radius:8px;padding:5px;box-shadow:0 12px 28px rgba(0,0,0,.45)
+}
+#contextMenu button{display:block;width:100%;text-align:left;border:0;background:transparent;padding:7px 9px}
+#contextMenu button:hover{background:#334155}
+.list{display:flex;flex-direction:column;gap:3px;max-height:260px;overflow:auto}
+.item{
+ display:flex;align-items:center;gap:6px;padding:6px;border:1px solid transparent;border-radius:7px;
+ cursor:pointer;font-size:12px;overflow:hidden
+}
+.item:hover{background:#28313e}.item.selected{border-color:var(--sel);background:#3b3515}
+.dot{width:11px;height:11px;border-radius:50%;flex:0 0 auto}
+.ellipsis{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.badge{font-size:10px;background:#10151c;border:1px solid var(--border);border-radius:999px;padding:2px 6px;color:#cbd5e1}
+.footer{
+ display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:6px 10px;
+ background:#12161d;border-top:1px solid var(--border);font-size:12px
+}
+.progress{height:7px;background:#29313c;border-radius:999px;overflow:hidden}
+.progress>div{height:100%;background:#38bdf8;width:0}
+#status{color:#cbd5e1;max-width:42vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+dialog{background:#171b22;color:var(--text);border:1px solid #475569;border-radius:12px;max-width:min(720px,92vw)}
+dialog::backdrop{background:rgba(0,0,0,.55)}
+dialog textarea{width:100%;min-height:120px;padding:8px}
+.palette{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;max-height:280px;overflow:auto}
+.colorRow{display:grid;grid-template-columns:28px 1fr;gap:6px;align-items:center}
+.colorRow input[type=color]{width:28px;height:28px;border:0;padding:0;background:none}
+.kbd{background:#0f141b;border:1px solid #475569;border-radius:4px;padding:1px 4px;font-size:10px}
+.hidden{display:none!important}
+@media(max-width:1000px){.main{grid-template-columns:180px minmax(0,1fr) 250px}}
+@media(max-width:760px){body{overflow:auto}.app{height:auto;min-height:100vh}.main{grid-template-columns:1fr}.stageWrap{height:60vh;order:-1}.sidebar,.right{border:0;border-top:1px solid var(--border)}}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "@ultralytics/yolo": "https://esm.sh/@ultralytics/yolo",
+    "@litertjs/core": "https://esm.sh/@litertjs/core",
+    "@litertjs/wasm-utils": "https://esm.sh/@litertjs/wasm-utils"
+  }
+}
+</script>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="brand">AVAW CVAT BBOX · LiteRT</div>
+    <button id="openDirBtn" title="Open one working folder, load its images and YOLO .txt annotations, and save annotations back into the same folder">Open Working Folder</button>
+    <button id="loadFolderBtn" title="Import images and annotations for editing without choosing the save destination">Import Images / Annotations</button>
+    <input id="folderInput" class="hidden" type="file" webkitdirectory multiple accept=".png,.jpg,.jpeg,.txt">
+    <button id="saveFolderBtn" title="Choose where annotation .txt files will be written when using imported files">Choose Annotation Save Folder</button>
+    <span id="saveFolderLabel" class="small">Annotation output: not set</span>
+    <button id="saveBtn" class="primary">Save Annotation</button>
+    <button id="saveAnnotatedBtn">Save Annotated PNG</button>
+    <div class="spacer"></div>
+    <button id="undoBtn">Undo</button>
+    <button id="helpBtn">Help</button>
+  </div>
+
+  <div class="main">
+    <aside class="sidebar">
+      <div class="section">
+        <h3>Images</h3>
+        <div class="row">
+          <button id="prevBtn">◀</button>
+          <input id="jumpInput" class="grow" type="number" min="0" value="0" style="width:70px;padding:6px">
+          <button id="nextBtn">▶</button>
+        </div>
+        <div id="imageList" class="list"></div>
+      </div>
+
+      <div class="section">
+        <h3>Annotation</h3>
+        <label class="small">Class</label>
+        <select id="classSelect" style="width:100%;padding:7px"></select>
+        <div class="row">
+          <button id="addBoxBtn" class="grow">New box</button>
+          <button id="deleteBtn" class="danger">Delete</button>
+        </div>
+        <div class="row">
+          <button id="copyBtn" class="grow">Copy</button>
+          <button id="pasteBtn" class="grow">Paste</button>
+        </div>
+        <label class="row small"><input id="autoSave" type="checkbox"> Auto save on navigation</label>
+<div class="small">Off: unsaved box edits are discarded when leaving the image.</div>
+        <label class="row small"><input id="showConf" type="checkbox" checked> Show confidence</label>
+      </div>
+
+      <div class="section">
+        <h3>Global</h3>
+        <div class="row"><button data-shift="0,-1">↑ 1 px</button><button data-shift="0,1">↓ 1 px</button></div>
+        <div class="row"><button data-shift="-1,0">← 1 px</button><button data-shift="1,0">→ 1 px</button></div>
+        <button id="dedupeBtn" style="width:100%">Delete duplicate boxes</button>
+        <button id="deleteAllBtn" class="danger" style="width:100%;margin-top:6px">Delete all boxes</button>
+      </div>
+
+      <div class="section">
+        <h3>Augmentation</h3>
+        <button id="flipHBtn" style="width:100%">Flip left ↔ right</button>
+        <button id="flipVBtn" style="width:100%;margin-top:6px">Flip up ↕ down</button>
+        <button id="viewportPngBtn" style="width:100%;margin-top:6px">Save viewport PNG</button>
+      </div>
+    </aside>
+
+    <main class="stageWrap" id="stageWrap">
+      <canvas id="canvas" tabindex="0"></canvas>
+      <div id="loading" class="loading">
+        <div class="loadCard">
+          <div class="spinner"></div>
+          <div id="loadTitle" style="font-weight:800">Loading model…</div>
+          <div id="loadText" class="small" style="margin-top:5px">Preparing WebGPU session</div>
+        </div>
+      </div>
+    </main>
+
+    <aside class="sidebar right">
+      <div class="section">
+        <h3>Boxes <span id="boxCount" class="badge">0</span></h3>
+        <div id="boxList" class="list"></div>
+      </div>
+
+      <div class="section">
+        <h3>Classes</h3>
+        <button id="classesBtn" style="width:100%">Names & colours</button>
+      </div>
+
+      <div class="section">
+        <h3>YOLO prediction · LiteRT</h3>
+        <input id="modelInput" type="file" accept=".tflite" style="width:100%">
+        <div id="modelFileName" class="small" style="margin:7px 0">
+          No model selected.
+        </div>
+        <button id="loadModelBtn" style="width:100%;margin-bottom:7px" disabled>Load / retry model</button>
+        <div class="small" style="margin-bottom:7px">
+          Selecting a .tflite file loads that exact model immediately. The button above can retry the same file if loading fails.
+        </div>
+        <label class="small">Confidence <b id="confVal">0.70</b></label>
+        <input id="conf" type="range" min="0.01" max="0.95" step="0.01" value="0.70">
+        <label class="small">NMS IoU <b id="iouVal">0.80</b></label>
+        <input id="iou" type="range" min="0.10" max="0.95" step="0.01" value="0.80">
+        <button id="runYoloBtn" class="primary" style="width:100%;margin-top:7px">Run YOLO inference</button>
+        <div id="modelStatus" class="small" style="margin-top:7px">No LiteRT model loaded.</div>
+        <div class="small" style="margin-top:7px">
+          Alt-click on the image: low-threshold prediction and add the best detected box containing that point.
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Inference timing</h3>
+        <div class="small">Backend: <b id="backendStat">—</b></div>
+        <div class="small">Preprocess: <b id="preTime">—</b></div>
+        <div class="small">Inference: <b id="inferTime">—</b></div>
+        <div class="small">Postprocess: <b id="postTime">—</b></div>
+        <div class="small">Environment: <b id="runtimeEnv">—</b></div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="footer">
+    <div id="counter">0/0</div>
+    <div class="progress"><div id="progressBar"></div></div>
+    <div id="status">Load an image folder to begin.</div>
+  </footer>
+</div>
+
+<div id="contextMenu"></div>
+
+<dialog id="classesDialog">
+  <h3>Class names & colours</h3>
+  <div class="small">One class name per line. Imported <code>class_names.txt</code> is detected automatically when present.</div>
+  <textarea id="classNamesText"></textarea>
+  <div id="palette" class="palette" style="margin-top:10px"></div>
+  <div class="row" style="justify-content:flex-end;margin-top:12px">
+    <button id="cancelClassesBtn">Cancel</button>
+    <button id="applyClassesBtn" class="primary">Apply</button>
+  </div>
+</dialog>
+
+<dialog id="helpDialog">
+  <h3>Browser controls</h3>
+  <div class="small" style="line-height:1.7">
+    <b>Left click</b>: select box · <b>drag</b>: move · drag yellow corner handle: resize<br>
+    <b>N</b>: new box, then drag · <b>Delete</b>: delete selection · <b>Ctrl+A</b>: select all<br>
+    <b>Ctrl+click</b>: multi-select · drag empty space: marquee-select contained boxes<br>
+    <b>Ctrl+C / Ctrl+V</b>: copy/paste boxes · <b>Q/A / E/D / ←/→</b>: previous/next image<br>
+    <b>S</b>: save annotation · <b>Y</b>: run LiteRT YOLO · <b>Alt+click</b>: single-click YOLO prediction<br>
+    <b>Mouse wheel</b>: zoom at cursor · <b>middle-drag</b>: pan · <b>0</b>: reset view<br>
+    <b>4/6/8/2</b>: translate annotations left/right/up/down by 1 pixel.
+  </div>
+  <div class="row" style="justify-content:flex-end;margin-top:12px"><button id="closeHelpBtn">Close</button></div>
+</dialog>
+
+<script type="module">
+"use strict";
+
+const COCO=["person","bicycle","car","motorcycle","airplane","bus","train","truck","boat","traffic light",
+"fire hydrant","stop sign","parking meter","bench","bird","cat","dog","horse","sheep","cow","elephant","bear","zebra","giraffe",
+"backpack","umbrella","handbag","tie","suitcase","frisbee","skis","snowboard","sports ball","kite","baseball bat","baseball glove",
+"skateboard","surfboard","tennis racket","bottle","wine glass","cup","fork","knife","spoon","bowl","banana","apple","sandwich","orange",
+"broccoli","carrot","hot dog","pizza","donut","cake","chair","couch","potted plant","bed","dining table","toilet","tv","laptop","mouse",
+"remote","keyboard","cell phone","microwave","oven","toaster","sink","refrigerator","book","clock","vase","scissors","teddy bear","hair drier","toothbrush"];
+
+const $=id=>document.getElementById(id);
+const els={
+ canvas:$("canvas"),stage:$("stageWrap"),openDirBtn:$("openDirBtn"),loadFolderBtn:$("loadFolderBtn"),folderInput:$("folderInput"),
+ saveFolderBtn:$("saveFolderBtn"),saveFolderLabel:$("saveFolderLabel"),
+ saveBtn:$("saveBtn"),saveAnnotatedBtn:$("saveAnnotatedBtn"),undoBtn:$("undoBtn"),helpBtn:$("helpBtn"),
+ imageList:$("imageList"),prevBtn:$("prevBtn"),nextBtn:$("nextBtn"),jumpInput:$("jumpInput"),
+ classSelect:$("classSelect"),addBoxBtn:$("addBoxBtn"),deleteBtn:$("deleteBtn"),copyBtn:$("copyBtn"),pasteBtn:$("pasteBtn"),
+ autoSave:$("autoSave"),showConf:$("showConf"),dedupeBtn:$("dedupeBtn"),deleteAllBtn:$("deleteAllBtn"),
+ flipHBtn:$("flipHBtn"),flipVBtn:$("flipVBtn"),viewportPngBtn:$("viewportPngBtn"),
+ boxList:$("boxList"),boxCount:$("boxCount"),classesBtn:$("classesBtn"),
+ modelInput:$("modelInput"),modelFileName:$("modelFileName"),loadModelBtn:$("loadModelBtn"),conf:$("conf"),confVal:$("confVal"),
+ iou:$("iou"),iouVal:$("iouVal"),runYoloBtn:$("runYoloBtn"),modelStatus:$("modelStatus"),
+ backendStat:$("backendStat"),preTime:$("preTime"),inferTime:$("inferTime"),postTime:$("postTime"),runtimeEnv:$("runtimeEnv"),
+ counter:$("counter"),progressBar:$("progressBar"),status:$("status"),contextMenu:$("contextMenu"),
+ classesDialog:$("classesDialog"),classNamesText:$("classNamesText"),palette:$("palette"),
+ cancelClassesBtn:$("cancelClassesBtn"),applyClassesBtn:$("applyClassesBtn"),helpDialog:$("helpDialog"),closeHelpBtn:$("closeHelpBtn"),
+ loading:$("loading"),loadTitle:$("loadTitle"),loadText:$("loadText")
+};
+const ctx=els.canvas.getContext("2d");
+
+window.addEventListener("error",ev=>{
+  const msg=ev?.error?.stack || ev?.message || "Unknown JavaScript error";
+  if(els.status) els.status.textContent=`JavaScript startup/runtime error: ${msg}`;
+  console.error("AVAW browser error:",ev.error||ev);
+});
+window.addEventListener("unhandledrejection",ev=>{
+  const msg=ev?.reason?.stack || ev?.reason?.message || String(ev?.reason||"Unknown promise error");
+  if(els.status) els.status.textContent=`JavaScript promise error: ${msg}`;
+  console.error("AVAW promise error:",ev.reason);
+});
+
+let directoryHandle=null;
+let saveDirectoryHandle=null;   // reused for all annotation writes during this page session
+let records=[];                  // {file,stem,name,bitmap,width,height,annotations,confidences,dirty,txtHandle}
+let current=-1;
+let classNames=[...COCO];
+let classColors=[];
+let selected=null,multi=new Set(),clipboard=[];
+let undoStack=[];
+let mode="select";               // select | add
+let drag=null, marquee=null, pan=null;
+let fitScale=1, zoom=1, offsetX=0, offsetY=0;
+let currentModelFile=null;       // selected .tflite File
+let currentModel=null;           // loaded @ultralytics/yolo model
+let modelLoadState="idle";       // idle | selected | loading | ready | error
+let YOLO=null;
+let runtimeLoadPromise=null;
+let loadClock=null,loadStarted=0;
+let redrawPending=false;
+
+function status(s){els.status.textContent=s}
+function natural(a,b){return a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"})}
+function stem(name){return name.replace(/\.[^.]+$/,"")}
+function ext(name){const m=name.match(/(\.[^.]+)$/);return m?m[1].toLowerCase():""}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function hex(rgb){return "#"+rgb.map(v=>v.toString(16).padStart(2,"0")).join("")}
+function hsvColor(i,n){
+  const h=(i/Math.max(1,n))*6,c=1,x=c*(1-Math.abs(h%2-1));let r=0,g=0,b=0;
+  if(h<1)[r,g,b]=[c,x,0];else if(h<2)[r,g,b]=[x,c,0];else if(h<3)[r,g,b]=[0,c,x];
+  else if(h<4)[r,g,b]=[0,x,c];else if(h<5)[r,g,b]=[x,0,c];else [r,g,b]=[c,0,x];
+  return [Math.round(r*255),Math.round(g*255),Math.round(b*255)];
+}
+function regenColors(){
+  const old=classColors.slice();
+  classColors=classNames.map((_,i)=>old[i]||hsvColor(i,classNames.length));
+}
+regenColors();
+
+function rec(){return current>=0?records[current]:null}
+function savePrefs(){
+  localStorage.setItem("avaw_bbox_browser",JSON.stringify({
+    classNames,classColors,autoSave:els.autoSave.checked,showConf:els.showConf.checked,
+    conf:+els.conf.value,iou:+els.iou.value
+  }));
+}
+function loadPrefs(){
+  try{
+    const p=JSON.parse(localStorage.getItem("avaw_bbox_browser")||"{}");
+    if(Array.isArray(p.classNames)&&p.classNames.length)classNames=p.classNames;
+    if(Array.isArray(p.classColors)&&p.classColors.length)classColors=p.classColors;else regenColors();
+    els.autoSave.checked=!!p.autoSave;els.showConf.checked=p.showConf!==false;
+    if(p.conf)els.conf.value=p.conf;if(p.iou)els.iou.value=p.iou;
+  }catch{}
+}
+loadPrefs();
+
+function updateClassUI(){
+  els.classSelect.innerHTML="";
+  classNames.forEach((n,i)=>{
+    const o=document.createElement("option");o.value=i;o.textContent=`${i}: ${n}`;els.classSelect.appendChild(o);
+  });
+  renderClassDialog();
+  renderBoxList();
+}
+updateClassUI();
+
+function renderClassDialog(){
+  els.classNamesText.value=classNames.join("\n");
+  els.palette.innerHTML="";
+  classNames.forEach((n,i)=>{
+    const row=document.createElement("div");row.className="colorRow";
+    const inp=document.createElement("input");inp.type="color";inp.value=hex(classColors[i]||hsvColor(i,classNames.length));inp.dataset.idx=i;
+    const lab=document.createElement("div");lab.textContent=`${i}: ${n}`;lab.className="ellipsis";
+    row.append(inp,lab);els.palette.appendChild(row);
+  });
+}
+els.classesBtn.onclick=()=>{renderClassDialog();els.classesDialog.showModal()};
+els.cancelClassesBtn.onclick=()=>els.classesDialog.close();
+els.applyClassesBtn.onclick=()=>{
+  const names=els.classNamesText.value.split(/\r?\n|,/).map(s=>s.trim()).filter(Boolean);
+  if(!names.length)return;
+  const colors=[...els.palette.querySelectorAll("input[type=color]")].map(x=>{
+    const v=x.value;return [parseInt(v.slice(1,3),16),parseInt(v.slice(3,5),16),parseInt(v.slice(5,7),16)];
+  });
+  classNames=names;
+  classColors=names.map((_,i)=>colors[i]||hsvColor(i,names.length));
+  savePrefs();updateClassUI();requestDraw();els.classesDialog.close();
+};
+
+function setSaveDirectory(handle){
+  saveDirectoryHandle=handle||null;
+  els.saveFolderLabel.textContent=saveDirectoryHandle
+    ? `Annotation output: ${saveDirectoryHandle.name}`
+    : "Annotation output: not set";
+}
+
+async function chooseSaveDirectory(){
+  if(!window.showDirectoryPicker){
+    status("Direct folder writing is unavailable in this browser. Use a Chromium-based browser.");
+    return null;
+  }
+  try{
+    const handle=await showDirectoryPicker({mode:"readwrite"});
+    setSaveDirectory(handle);
+    status(`Annotation output folder set to: ${handle.name}`);
+    return handle;
+  }catch(e){
+    if(e.name!=="AbortError")status(`Save-folder error: ${e.message}`);
+    return null;
+  }
+}
+
+async function filesFromDirectory(handle){
+  const out=[];
+  for await(const [name,h] of handle.entries()){
+    if(h.kind==="file"){
+      const e=ext(name);
+      if([".png",".jpg",".jpeg",".txt"].includes(e))out.push(await h.getFile());
+    }
+  }
+  return out;
+}
+els.openDirBtn.onclick=async()=>{
+  try{
+    if(!window.showDirectoryPicker)throw new Error("Directory picker unavailable; use Load Folder / Files.");
+    directoryHandle=await showDirectoryPicker({mode:"readwrite"});
+    setSaveDirectory(directoryHandle);
+    const files=await filesFromDirectory(directoryHandle);
+    await loadFiles(files,true);
+  }catch(e){if(e.name!=="AbortError")status(`Folder error: ${e.message}`)}
+};
+els.loadFolderBtn.onclick=()=>els.folderInput.click();
+els.saveFolderBtn.onclick=()=>chooseSaveDirectory();
+els.folderInput.onchange=()=>loadFiles([...els.folderInput.files],false);
+
+async function loadFiles(files,fromDirectory=false){
+  if(!files.length)return;
+  const imageFiles=files.filter(f=>[".png",".jpg",".jpeg"].includes(ext(f.name))).sort((a,b)=>natural(a.name,b.name));
+  const txtMap=new Map(files.filter(f=>ext(f.name)===".txt").map(f=>[stem(f.name),f]));
+  const classFile=files.find(f=>f.name.toLowerCase()==="class_names.txt");
+  if(classFile){
+    const t=await classFile.text();
+    const names=t.split(/\r?\n|,/).map(s=>s.trim()).filter(Boolean);
+    if(names.length){classNames=names;regenColors();updateClassUI();savePrefs()}
+  }
+
+  const newRecords=[];
+  for(const file of imageFiles){
+    const bm=await createImageBitmap(file);
+    const r={file,name:file.name,stem:stem(file.name),bitmap:bm,width:bm.width,height:bm.height,
+      annotations:[],confidences:[],dirty:false,txtHandle:null,
+      lastSavedAnnotations:[],lastSavedConfidences:[]};
+    const tf=txtMap.get(r.stem);
+    if(tf)parseYoloText(await tf.text(),r);
+
+    // Baseline used when Auto save on navigation is OFF.
+    r.lastSavedAnnotations=r.annotations.map(a=>a.slice());
+    r.lastSavedConfidences=r.confidences.slice();
+
+    // Output is handled by the single saveDirectoryHandle selected for this session.
+    newRecords.push(r);
+  }
+  if(!newRecords.length){status("No PNG/JPG/JPEG images found.");return}
+  records=newRecords;current=0;selected=null;multi.clear();undoStack=[];
+  await showRecord(0,false);
+  status(`Loaded ${records.length} images.`);
+}
+
+function parseYoloText(text,r){
+  r.annotations=[];
+  for(const line of text.split(/\r?\n/)){
+    const p=line.trim().split(/\s+/).map(Number);
+    if(p.length<5||p.some(v=>!Number.isFinite(v)))continue;
+    const [cls,xc,yc,w,h]=p;
+    const bw=w*r.width,bh=h*r.height,cx=xc*r.width,cy=yc*r.height;
+    r.annotations.push([Math.trunc(cls),cx-bw/2,cy-bh/2,cx+bw/2,cy+bh/2]);
+    r.confidences.push(null);
+  }
+}
+function yoloText(r){
+  return r.annotations.map(a=>{
+    const [c,x1,y1,x2,y2]=a;
+    const xc=(x1+x2)/2/r.width,yc=(y1+y2)/2/r.height,w=Math.abs(x2-x1)/r.width,h=Math.abs(y2-y1)/r.height;
+    return `${c} ${xc.toFixed(6)} ${yc.toFixed(6)} ${w.toFixed(6)} ${h.toFixed(6)}`;
+  }).join("\n")+(r.annotations.length?"\n":"");
+}
+async function saveCurrent(silent=false){
+  const r=rec();
+  if(!r)return false;
+
+  const text=yoloText(r);
+
+  try{
+    if(!saveDirectoryHandle){
+      const handle=await chooseSaveDirectory();
+      if(!handle){
+        if(!silent)status("Save cancelled: no save folder selected.");
+        return false;
+      }
+    }
+
+    const fileHandle=await saveDirectoryHandle.getFileHandle(
+      r.stem+".txt",
+      {create:true}
+    );
+    const writable=await fileHandle.createWritable();
+    await writable.write(text);
+    await writable.close();
+
+    r.dirty=false;
+    r.lastSavedAnnotations=r.annotations.map(a=>a.slice());
+    r.lastSavedConfidences=r.confidences.slice();
+    renderImageList();
+
+    if(!silent)status(`Saved ${r.stem}.txt → ${saveDirectoryHandle.name}`);
+    return true;
+  }catch(e){
+    status(`Save failed: ${e?.message||e}`);
+    return false;
+  }
+}
+els.saveBtn.onclick=()=>saveCurrent(false);
+
+function downloadBlob(blob,name){
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+async function saveAnnotated(){
+  const r=rec();if(!r)return;
+  const c=document.createElement("canvas");c.width=r.width;c.height=r.height;
+  const x=c.getContext("2d");x.drawImage(r.bitmap,0,0);
+  drawBoxesToContext(x,r,1,0,0,false);
+  c.toBlob(b=>downloadBlob(b,r.stem+"_annotated.png"),"image/png");
+}
+els.saveAnnotatedBtn.onclick=saveAnnotated;
+els.viewportPngBtn.onclick=()=>{
+  els.canvas.toBlob(b=>downloadBlob(b,(rec()?.stem||"viewport")+"_viewport.png"),"image/png");
+};
+
+function discardUnsavedAnnotations(r){
+  if(!r || !r.dirty)return;
+
+  r.annotations=(r.lastSavedAnnotations||[]).map(a=>a.slice());
+  r.confidences=(r.lastSavedConfidences||[]).slice();
+  r.dirty=false;
+}
+
+async function showRecord(idx,doAuto=true){
+  if(idx<0||idx>=records.length)return;
+
+  const previous=rec();
+
+  if(doAuto && previous?.dirty){
+    if(els.autoSave.checked){
+      const saved=await saveCurrent(true);
+      if(!saved){
+        status("Navigation cancelled because the annotation was not saved.");
+        return;
+      }
+    }else{
+      // Browser records stay resident in memory, so explicitly revert them.
+      // This makes "Auto save on navigation" behave like its label implies:
+      // unchecked means unsaved annotation edits do not survive navigation.
+      discardUnsavedAnnotations(previous);
+    }
+  }
+
+  current=idx;
+  selected=null;
+  multi.clear();
+  undoStack=[];
+  mode="select";
+  els.addBoxBtn.classList.remove("active");
+  resetView();
+  refreshAll();
+}
+function next(){if(current+1<records.length)showRecord(current+1)}
+function prev(){if(current>0)showRecord(current-1)}
+els.nextBtn.onclick=next;els.prevBtn.onclick=prev;
+els.jumpInput.onchange=()=>{const i=+els.jumpInput.value;if(i>=0&&i<records.length)showRecord(i)};
+function renderImageList(){
+  els.imageList.innerHTML="";
+  records.forEach((r,i)=>{
+    const d=document.createElement("div");d.className="item"+(i===current?" selected":"");
+    d.innerHTML=`<span class="badge">${i}</span><span class="ellipsis">${r.name}${r.dirty?" *":""}</span>`;
+    d.onclick=()=>showRecord(i);els.imageList.appendChild(d);
+  });
+}
+function refreshProgress(){
+  els.counter.textContent=records.length?`${current}/${records.length-1}`:"0/0";
+  els.jumpInput.value=Math.max(0,current);
+  els.jumpInput.max=Math.max(0,records.length-1);
+  els.progressBar.style.width=records.length>1?`${100*current/(records.length-1)}%`:records.length?"100%":"0%";
+}
+
+function pushUndo(){
+  const r=rec();if(!r)return;
+  undoStack.push({a:r.annotations.map(x=>x.slice()),c:r.confidences.slice()});
+  if(undoStack.length>10)undoStack.shift();
+}
+function undo(){
+  const r=rec();if(!r||!undoStack.length)return;
+  const s=undoStack.pop();r.annotations=s.a;r.confidences=s.c;r.dirty=true;selected=null;multi.clear();refreshAll();
+}
+els.undoBtn.onclick=undo;
+
+function markDirty(){const r=rec();if(r){r.dirty=true;renderImageList()}}
+function selectedIndices(){
+  if(multi.size)return [...multi].filter(i=>i>=0&&i<(rec()?.annotations.length||0));
+  return selected!==null?[selected]:[];
+}
+function deleteSelection(){
+  const r=rec();if(!r){status("No image loaded.");return}
+  const ids=selectedIndices().sort((a,b)=>b-a);
+  if(!ids.length){status("No box selected to delete.");return}
+  pushUndo();
+  for(const i of ids){r.annotations.splice(i,1);r.confidences.splice(i,1)}
+  selected=null;multi.clear();markDirty();refreshAll();
+}
+els.deleteBtn.onclick=deleteSelection;
+els.deleteAllBtn.onclick=()=>{
+  const r=rec();if(!r||!r.annotations.length)return;
+  if(!confirm("Delete all annotations in this image?"))return;
+  pushUndo();r.annotations=[];r.confidences=[];selected=null;multi.clear();markDirty();refreshAll();
+};
+els.dedupeBtn.onclick=()=>{
+  const r=rec();if(!r)return;pushUndo();
+  const seen=new Set(),a=[],c=[];
+  r.annotations.forEach((b,i)=>{const k=b.map(v=>Math.round(v*1000)/1000).join(",");if(!seen.has(k)){seen.add(k);a.push(b);c.push(r.confidences[i])}});
+  const n=r.annotations.length-a.length;r.annotations=a;r.confidences=c;markDirty();refreshAll();status(`Removed ${n} duplicate boxes.`);
+};
+
+els.copyBtn.onclick=()=>{
+  const r=rec();if(!r)return;clipboard=selectedIndices().map(i=>r.annotations[i].slice());status(`Copied ${clipboard.length} box(es).`);
+};
+els.pasteBtn.onclick=()=>{
+  const r=rec();if(!r||!clipboard.length)return;pushUndo();
+  for(const b of clipboard){r.annotations.push(b.slice());r.confidences.push("Manual")}
+  markDirty();refreshAll();
+};
+
+els.classSelect.onchange=()=>{
+  const r=rec();if(!r)return;const ids=selectedIndices();if(!ids.length)return;
+  pushUndo();for(const i of ids)r.annotations[i][0]=+els.classSelect.value;markDirty();refreshAll();
+};
+els.addBoxBtn.onclick=()=>{mode=mode==="add"?"select":"add";els.addBoxBtn.classList.toggle("active",mode==="add");status(mode==="add"?"Drag on image to create a box.":"Add-box mode cancelled.")};
+els.showConf.onchange=()=>{savePrefs();requestDraw()};
+els.autoSave.onchange=savePrefs;
+
+document.querySelectorAll("[data-shift]").forEach(b=>b.onclick=()=>{
+  const [dx,dy]=b.dataset.shift.split(",").map(Number);translateAll(dx,dy);
+});
+function translateAll(dx,dy){
+  const r=rec();if(!r)return;pushUndo();
+  r.annotations=r.annotations.map(([c,x1,y1,x2,y2])=>[c,clamp(x1+dx,0,r.width),clamp(y1+dy,0,r.height),clamp(x2+dx,0,r.width),clamp(y2+dy,0,r.height)]);
+  markDirty();refreshAll();
+}
+
+async function flipImage(horizontal){
+  const r=rec();if(!r)return;pushUndo();
+  const c=document.createElement("canvas");c.width=r.width;c.height=r.height;const x=c.getContext("2d");
+  x.save();if(horizontal){x.translate(r.width,0);x.scale(-1,1)}else{x.translate(0,r.height);x.scale(1,-1)}x.drawImage(r.bitmap,0,0);x.restore();
+  const blob=await new Promise(res=>c.toBlob(res,"image/png"));r.bitmap=await createImageBitmap(blob);
+  r.annotations=r.annotations.map(([cl,x1,y1,x2,y2])=>horizontal
+    ?[cl,r.width-x2,y1,r.width-x1,y2]
+    :[cl,x1,r.height-y2,x2,r.height-y1]);
+  r.dirty=true;selected=null;multi.clear();resetView();refreshAll();
+}
+els.flipHBtn.onclick=()=>flipImage(true);els.flipVBtn.onclick=()=>flipImage(false);
+
+function resetView(){
+  const r=rec();if(!r){fitScale=1;zoom=1;offsetX=offsetY=0;requestDraw();return}
+  const rect=els.stage.getBoundingClientRect();
+  fitScale=Math.min(rect.width/r.width,rect.height/r.height);
+  zoom=1;
+  offsetX=(rect.width-r.width*fitScale)/2;
+  offsetY=(rect.height-r.height*fitScale)/2;
+  requestDraw();
+}
+function canvasPoint(ev){
+  const rect=els.canvas.getBoundingClientRect();return {x:ev.clientX-rect.left,y:ev.clientY-rect.top};
+}
+function imagePointFromCanvas(x,y){
+  const s=fitScale*zoom;return {x:(x-offsetX)/s,y:(y-offsetY)/s};
+}
+function canvasPointFromImage(x,y){
+  const s=fitScale*zoom;return {x:offsetX+x*s,y:offsetY+y*s};
+}
+function resizeCanvas(){
+  const rect=els.stage.getBoundingClientRect(),dpr=Math.max(1,devicePixelRatio||1);
+  els.canvas.width=Math.round(rect.width*dpr);els.canvas.height=Math.round(rect.height*dpr);
+  els.canvas.style.width=rect.width+"px";els.canvas.style.height=rect.height+"px";
+  ctx.setTransform(dpr,0,0,dpr,0,0);resetView();
+}
+new ResizeObserver(resizeCanvas).observe(els.stage);
+
+function requestDraw(){
+  if(redrawPending)return;redrawPending=true;requestAnimationFrame(()=>{redrawPending=false;draw()});
+}
+function draw(){
+  const rect=els.stage.getBoundingClientRect();ctx.clearRect(0,0,rect.width,rect.height);ctx.fillStyle="#050608";ctx.fillRect(0,0,rect.width,rect.height);
+  const r=rec();if(!r){ctx.fillStyle="#94a3b8";ctx.font="18px system-ui";ctx.textAlign="center";ctx.fillText("Load images to begin",rect.width/2,rect.height/2);return}
+  const s=fitScale*zoom;
+  ctx.drawImage(r.bitmap,offsetX,offsetY,r.width*s,r.height*s);
+  drawBoxesToContext(ctx,r,s,offsetX,offsetY,true);
+  if(marquee){
+    ctx.save();ctx.strokeStyle="#fff";ctx.setLineDash([7,5]);ctx.lineWidth=1.5;
+    ctx.strokeRect(marquee.x,marquee.y,marquee.x2-marquee.x,marquee.y2-marquee.y);ctx.restore();
+  }
+  if(mode==="add"&&drag?.type==="new"){
+    ctx.save();ctx.strokeStyle="#22c55e";ctx.lineWidth=2;ctx.strokeRect(drag.sx,drag.sy,drag.cx-drag.sx,drag.cy-drag.sy);ctx.restore();
+  }
+}
+function drawBoxesToContext(x,r,s,ox,oy,interactive){
+  x.save();x.font=`${Math.max(12,13*(interactive?1:Math.max(1,r.width/900)))}px system-ui`;x.textBaseline="top";
+  r.annotations.forEach((a,i)=>{
+    const [cl,x1,y1,x2,y2]=a,color=hex(classColors[cl]||[128,128,128]);
+    const X=ox+x1*s,Y=oy+y1*s,W=(x2-x1)*s,H=(y2-y1)*s;
+    const isSel=i===selected||multi.has(i);
+    x.strokeStyle=isSel?getComputedStyle(document.documentElement).getPropertyValue("--sel").trim():color;
+    x.lineWidth=isSel?3:2;x.strokeRect(X,Y,W,H);
+    const name=classNames[cl]??`Class ${cl}`,cf=r.confidences[i];
+    let lab=`${cl}: ${name}`;if(els.showConf.checked&&cf!==null&&cf!==undefined)lab+=` ${typeof cf==="number"?cf.toFixed(2):cf}`;
+    const tw=x.measureText(lab).width,pad=3,th=16;
+    x.fillStyle="rgba(0,0,0,.70)";x.fillRect(X,Y-th,tw+pad*2,th);
+    x.fillStyle=color;x.fillText(lab,X+pad,Y-th+1);
+    if(interactive&&i===selected){
+      const hs=8;for(const [cx,cy] of [[X,Y],[X+W,Y],[X,Y+H],[X+W,Y+H]]){x.fillStyle="#facc15";x.fillRect(cx-hs/2,cy-hs/2,hs,hs)}
+    }
+  });x.restore();
+}
+function hitBox(ix,iy){
+  const r=rec();if(!r)return null;
+  for(let i=r.annotations.length-1;i>=0;i--){const a=r.annotations[i];if(ix>=a[1]&&ix<=a[3]&&iy>=a[2]&&iy<=a[4])return i}
+  return null;
+}
+function hitHandle(cx,cy){
+  if(selected===null)return null;const r=rec(),a=r?.annotations[selected];if(!a)return null;
+  const pts={tl:canvasPointFromImage(a[1],a[2]),tr:canvasPointFromImage(a[3],a[2]),bl:canvasPointFromImage(a[1],a[4]),br:canvasPointFromImage(a[3],a[4])};
+  for(const [k,p] of Object.entries(pts))if(Math.hypot(cx-p.x,cy-p.y)<10)return k;return null;
+}
+function normalizeBox(a,r){
+  let [c,x1,y1,x2,y2]=a;[x1,x2]=[Math.min(x1,x2),Math.max(x1,x2)];[y1,y2]=[Math.min(y1,y2),Math.max(y1,y2)];
+  return [c,clamp(x1,0,r.width),clamp(y1,0,r.height),clamp(x2,0,r.width),clamp(y2,0,r.height)];
+}
+
+els.canvas.onpointerdown=async ev=>{
+  els.canvas.focus({preventScroll:true});
+  if(!rec())return;
+  hideContext();els.canvas.setPointerCapture(ev.pointerId);
+  const p=canvasPoint(ev),ip=imagePointFromCanvas(p.x,p.y);
+  if(ev.button===1){pan={x:p.x,y:p.y,ox:offsetX,oy:offsetY};return}
+  if(ev.button!==0)return;
+  if(ev.altKey){await singleClickPrediction(ip.x,ip.y);return}
+
+  if(mode==="add"){pushUndo();drag={type:"new",sx:p.x,sy:p.y,cx:p.x,cy:p.y,startImg:ip};return}
+
+  const handle=hitHandle(p.x,p.y);
+  if(handle&&selected!==null){pushUndo();drag={type:"resize",handle,last:ip};return}
+
+  const hit=hitBox(ip.x,ip.y);
+  if(ev.ctrlKey||ev.metaKey){
+    if(hit!==null){if(multi.has(hit))multi.delete(hit);else multi.add(hit);selected=null;requestDraw();renderBoxList();return}
+  }
+  if(hit!==null){
+    if(!multi.has(hit)){selected=hit;if(!ev.shiftKey)multi.clear()}
+    pushUndo();drag={type:multi.size&&multi.has(hit)?"multiMove":"move",last:ip};requestDraw();renderBoxList();return;
+  }
+  selected=null;if(!ev.shiftKey)multi.clear();marquee={x:p.x,y:p.y,x2:p.x,y2:p.y,startImg:ip};requestDraw();renderBoxList();
+};
+els.canvas.onpointermove=ev=>{
+  const r=rec();if(!r)return;const p=canvasPoint(ev),ip=imagePointFromCanvas(p.x,p.y);
+  if(pan){offsetX=pan.ox+(p.x-pan.x);offsetY=pan.oy+(p.y-pan.y);requestDraw();return}
+  if(marquee){marquee.x2=p.x;marquee.y2=p.y;requestDraw();return}
+  if(!drag)return;
+  if(drag.type==="new"){drag.cx=p.x;drag.cy=p.y;requestDraw();return}
+  const dx=ip.x-drag.last.x,dy=ip.y-drag.last.y;
+  if(drag.type==="move"&&selected!==null){
+    const a=r.annotations[selected];a[1]+=dx;a[2]+=dy;a[3]+=dx;a[4]+=dy;r.annotations[selected]=normalizeBox(a,r);
+  }else if(drag.type==="multiMove"){
+    for(const i of multi){const a=r.annotations[i];a[1]+=dx;a[2]+=dy;a[3]+=dx;a[4]+=dy;r.annotations[i]=normalizeBox(a,r)}
+  }else if(drag.type==="resize"&&selected!==null){
+    const a=r.annotations[selected];
+    if(drag.handle==="tl"){a[1]+=dx;a[2]+=dy}if(drag.handle==="tr"){a[3]+=dx;a[2]+=dy}
+    if(drag.handle==="bl"){a[1]+=dx;a[4]+=dy}if(drag.handle==="br"){a[3]+=dx;a[4]+=dy}
+    r.annotations[selected]=a;
+  }
+  drag.last=ip;markDirty();requestDraw();renderBoxList();
+};
+els.canvas.onpointerup=ev=>{
+  const r=rec();if(!r)return;
+  if(pan){pan=null;return}
+  if(marquee){
+    const p=canvasPoint(ev),a=imagePointFromCanvas(marquee.x,marquee.y),b=imagePointFromCanvas(p.x,p.y);
+    if(Math.abs(p.x-marquee.x)>4||Math.abs(p.y-marquee.y)>4){
+      const x1=Math.min(a.x,b.x),x2=Math.max(a.x,b.x),y1=Math.min(a.y,b.y),y2=Math.max(a.y,b.y);
+      multi.clear();r.annotations.forEach((q,i)=>{if(q[1]>=x1&&q[2]>=y1&&q[3]<=x2&&q[4]<=y2)multi.add(i)});
+    }
+    marquee=null;requestDraw();renderBoxList();return
+  }
+  if(!drag)return;
+  if(drag.type==="new"){
+    const p=canvasPoint(ev),a=drag.startImg,b=imagePointFromCanvas(p.x,p.y);
+    let box=normalizeBox([+els.classSelect.value,a.x,a.y,b.x,b.y],r);
+    if(box[3]-box[1]>5&&box[4]-box[2]>5){r.annotations.push(box);r.confidences.push("Manual");selected=r.annotations.length-1;markDirty()}
+    else undoStack.pop();
+    mode="select";els.addBoxBtn.classList.remove("active");
+  }else if(selected!==null){r.annotations[selected]=normalizeBox(r.annotations[selected],r);markDirty()}
+  drag=null;refreshAll();
+};
+els.canvas.onwheel=ev=>{
+  if(!rec())return;ev.preventDefault();const p=canvasPoint(ev),before=imagePointFromCanvas(p.x,p.y);
+  const factor=ev.deltaY<0?1.1:0.9;zoom=clamp(zoom*factor,1,12);const s=fitScale*zoom;
+  offsetX=p.x-before.x*s;offsetY=p.y-before.y*s;requestDraw();
+};
+els.canvas.oncontextmenu=ev=>{ev.preventDefault();showContext(ev.clientX,ev.clientY)};
+
+function showContext(x,y){
+  const has=selectedIndices().length>0;
+  els.contextMenu.innerHTML="";
+  const add=(label,fn)=>{const b=document.createElement("button");b.textContent=label;b.onclick=()=>{hideContext();fn()};els.contextMenu.appendChild(b)};
+  if(has){add("Delete box(es)",deleteSelection);add("Copy box(es)",()=>els.copyBtn.click());classNames.slice(0,12).forEach((n,i)=>add(`Class ${i}: ${n}`,()=>{els.classSelect.value=i;els.classSelect.dispatchEvent(new Event("change"))}))}
+  else{add("Undo",undo);add("Save annotation",()=>saveCurrent());add("Paste box(es)",()=>els.pasteBtn.click());add("New box",()=>els.addBoxBtn.click())}
+  els.contextMenu.style.left=x+"px";els.contextMenu.style.top=y+"px";els.contextMenu.style.display="block";
+}
+function hideContext(){els.contextMenu.style.display="none"}
+document.addEventListener("click",e=>{if(!els.contextMenu.contains(e.target))hideContext()});
+
+function renderBoxList(){
+  const r=rec();els.boxList.innerHTML="";els.boxCount.textContent=r?.annotations.length||0;if(!r)return;
+  r.annotations.forEach((a,i)=>{
+    const d=document.createElement("div");d.className="item"+(i===selected||multi.has(i)?" selected":"");
+    const dot=document.createElement("span");dot.className="dot";dot.style.background=hex(classColors[a[0]]||[128,128,128]);
+    const t=document.createElement("span");t.className="ellipsis grow";t.textContent=`Box ${i} · ${classNames[a[0]]??"Class "+a[0]}`;
+    d.append(dot,t);d.onclick=()=>{selected=i;multi.clear();els.classSelect.value=a[0];requestDraw();renderBoxList()};els.boxList.appendChild(d);
+  });
+}
+function refreshAll(){renderImageList();refreshProgress();renderBoxList();requestDraw()}
+els.helpBtn.onclick=()=>els.helpDialog.showModal();
+els.closeHelpBtn.onclick=()=>els.helpDialog.close();
+
+function isTypingControl(el){
+  if(!el)return false;
+  if(el.isContentEditable)return true;
+  if(el.tagName==="TEXTAREA")return true;
+  if(el.tagName!=="INPUT")return false;
+  const t=(el.type||"text").toLowerCase();
+  return ["text","number","search","email","url","password","tel"].includes(t);
+}
+
+window.addEventListener("keydown",ev=>{
+  const k=ev.key.toLowerCase();
+
+  // Delete annotations even if a button, file picker, checkbox, range slider,
+  // or select still owns focus. Only protect real text/number editing fields.
+  if(isTypingControl(document.activeElement))return;
+  if((ev.ctrlKey||ev.metaKey)&&k==="a"){ev.preventDefault();const r=rec();if(r){selected=null;multi=new Set(r.annotations.map((_,i)=>i));requestDraw();renderBoxList()}return}
+  if((ev.ctrlKey||ev.metaKey)&&k==="c"){ev.preventDefault();els.copyBtn.click();return}
+  if((ev.ctrlKey||ev.metaKey)&&k==="v"){ev.preventDefault();els.pasteBtn.click();return}
+  if(k==="delete"||k==="backspace"){ev.preventDefault();deleteSelection();return}
+  if(k==="n"){els.addBoxBtn.click();return}
+  if(k==="s"){saveCurrent();return}
+  if(k==="y"){runYolo(false);return}
+  if(k==="q"||k==="a"||ev.key==="ArrowLeft"){prev();return}
+  if(k==="e"||k==="d"||ev.key==="ArrowRight"){next();return}
+  if(k==="4"){translateAll(-1,0);return}if(k==="6"){translateAll(1,0);return}if(k==="8"){translateAll(0,-1);return}if(k==="2"){translateAll(0,1);return}
+  if(k==="0"){resetView();return}
+});
+
+/* ---------------- LiteRT.js YOLO via @ultralytics/yolo ---------------- */
+function updateRuntimeEnvironment(){
+  const parts=[
+    navigator.gpu ? "WebGPU API yes" : "WebGPU API no",
+    window.isSecureContext ? "secure context" : "not secure",
+    self.crossOriginIsolated ? "cross-origin isolated" : "not cross-origin isolated"
+  ];
+  els.runtimeEnv.textContent=parts.join(" · ");
+}
+updateRuntimeEnvironment();
+
+function showLoading(title,text=""){
+  els.loadTitle.textContent=title;
+  els.loadText.textContent=text;
+  els.loading.classList.add("show");
+
+  loadStarted=performance.now();
+  if(loadClock) clearInterval(loadClock);
+
+  loadClock=setInterval(()=>{
+    const elapsed=((performance.now()-loadStarted)/1000).toFixed(1);
+    els.loadText.textContent=`${text}\n${elapsed} s elapsed`;
+  },100);
+}
+
+function hideLoading(){
+  els.loading.classList.remove("show");
+  if(loadClock){
+    clearInterval(loadClock);
+    loadClock=null;
+  }
+}
+
+function setModelState(state,message){
+  modelLoadState=state;
+  const prefix={
+    idle:"NO MODEL",
+    selected:"SELECTED",
+    loading:"LOADING",
+    ready:"READY",
+    error:"LOAD FAILED"
+  }[state]||state.toUpperCase();
+
+  els.modelStatus.textContent=`${prefix} · ${message||""}`;
+  els.loadModelBtn.disabled=!currentModelFile || state==="loading";
+}
+
+async function ensureYoloRuntime(){
+  if(YOLO)return YOLO;
+  if(runtimeLoadPromise)return runtimeLoadPromise;
+
+  runtimeLoadPromise=(async()=>{
+    showLoading("Loading LiteRT.js runtime…","Initializing @ultralytics/yolo and LiteRT.js");
+    try{
+      const mod=await import("@ultralytics/yolo");
+      if(!mod?.YOLO)throw new Error("@ultralytics/yolo loaded without a YOLO export.");
+      YOLO=mod.YOLO;
+      return YOLO;
+    }catch(e){
+      runtimeLoadPromise=null;
+      throw new Error(`Could not initialize browser YOLO/LiteRT runtime: ${e?.message||e}`);
+    }finally{
+      hideLoading();
+    }
+  })();
+
+  return runtimeLoadPromise;
+}
+
+function syncClassesFromModel(model){
+  const names=model?.names;
+  if(!names)return;
+
+  let values=[];
+  if(Array.isArray(names)){
+    values=names.map(String);
+  }else if(typeof names==="object"){
+    values=Object.keys(names)
+      .sort((a,b)=>Number(a)-Number(b))
+      .map(k=>String(names[k]));
+  }
+
+  if(values.length){
+    classNames=values;
+    regenColors();
+    updateClassUI();
+    savePrefs();
+  }
+}
+
+async function loadCurrentModel(){
+  if(!currentModelFile){
+    currentModel=null;
+    els.backendStat.textContent="—";
+    setSaveDirectory(null);
+setModelState("idle","Select one .tflite file.");
+    return null;
+  }
+
+  currentModel=null;
+  setModelState("loading",currentModelFile.name);
+  showLoading("Loading LiteRT model…",`${currentModelFile.name}\nPreparing LiteRT.js backend`);
+
+  try{
+    const Runtime=await ensureYoloRuntime();
+
+    // Use the official browser API exactly as documented:
+    // the .tflite bytes select the LiteRT.js backend automatically.
+    const model=await Runtime.load(currentModelFile);
+
+    if(!model || typeof model.predict!=="function"){
+      throw new Error("The runtime returned an invalid model object.");
+    }
+
+    currentModel=model;
+    els.backendStat.textContent=model.device||"unknown";
+    syncClassesFromModel(model);
+
+    setModelState(
+      "ready",
+      `${currentModelFile.name} · LiteRT.js · backend: ${model.device||"unknown"}`
+    );
+    status(`Model READY: ${currentModelFile.name} (${model.device||"unknown"}).`);
+    return model;
+  }catch(e){
+    currentModel=null;
+    els.backendStat.textContent="error";
+    const detail=e?.stack||e?.message||String(e);
+    setModelState("error",`${currentModelFile.name} · ${e?.message||e}`);
+    status(`LiteRT model load failed: ${detail}`);
+    console.error("LiteRT model load failed:",e);
+    throw e;
+  }finally{
+    hideLoading();
+  }
+}
+els.modelInput.onchange=async()=>{
+  const file=els.modelInput.files?.[0]||null;
+  currentModel=null;
+  currentModelFile=null;
+  els.backendStat.textContent="—";
+  els.preTime.textContent="—";
+  els.inferTime.textContent="—";
+  els.postTime.textContent="—";
+
+  if(!file){
+    els.modelFileName.textContent="No model selected.";
+    setModelState("idle","No LiteRT model loaded.");
+    return;
+  }
+
+  els.modelFileName.textContent=`Selected: ${file.name} · ${(file.size/1024/1024).toFixed(1)} MB`;
+
+  if(ext(file.name)!==".tflite"){
+    setModelState("error","Selected file is not a .tflite model.");
+    return;
+  }
+
+  currentModelFile=file;
+  setModelState("selected",file.name);
+
+  // Give the UI one frame to visibly show SELECTED before asynchronous loading.
+  await new Promise(requestAnimationFrame);
+
+  try{
+    await loadCurrentModel();
+  }catch{
+    // Full error is already visible in Model status and the footer.
+  }
+};
+
+els.loadModelBtn.onclick=async()=>{
+  if(!currentModelFile)return;
+  try{
+    await loadCurrentModel();
+  }catch{}
+};
+els.conf.oninput=()=>{
+  els.confVal.textContent=(+els.conf.value).toFixed(2);
+  savePrefs();
+};
+els.iou.oninput=()=>{
+  els.iouVal.textContent=(+els.iou.value).toFixed(2);
+  savePrefs();
+};
+
+async function inferDetections(conf=+els.conf.value,iou=+els.iou.value){
+  const r=rec();
+  if(!r)throw new Error("No image loaded.");
+  if(!currentModelFile)throw new Error("No .tflite model selected.");
+
+  if(modelLoadState!=="ready" || !currentModel){
+    const model=await loadCurrentModel();
+    if(!model)throw new Error("LiteRT model is not ready.");
+  }
+  const model=currentModel;
+
+  const wallStart=performance.now();
+  let results;
+
+  try{
+    // ImageBitmap is explicitly supported by the official browser API.
+    results=await model.predict(r.bitmap,{conf,iou});
+  }catch(e){
+    throw new Error(`model.predict() failed: ${e?.message||e}`);
+  }
+
+  const wall=performance.now()-wallStart;
+  const sp=results?.speed||{};
+
+  els.preTime.textContent=Number.isFinite(Number(sp.preprocess))
+    ? `${Number(sp.preprocess).toFixed(1)} ms`
+    : "—";
+  els.inferTime.textContent=Number.isFinite(Number(sp.inference))
+    ? `${Number(sp.inference).toFixed(1)} ms`
+    : `${wall.toFixed(1)} ms wall`;
+  els.postTime.textContent=Number.isFinite(Number(sp.postprocess))
+    ? `${Number(sp.postprocess).toFixed(1)} ms`
+    : "—";
+  els.backendStat.textContent=model.device||"unknown";
+
+  const boxes=Array.isArray(results?.boxes) ? results.boxes : [];
+
+  // If model.names was not exposed on the loaded model object, recover names
+  // from the detection results as they arrive.
+  if(boxes.length){
+    let changed=false;
+    for(const b of boxes){
+      const cls=Number(b.cls);
+      if(Number.isInteger(cls)&&b.name){
+        while(classNames.length<=cls)classNames.push(`Class ${classNames.length}`);
+        if(classNames[cls]!==String(b.name)){
+          classNames[cls]=String(b.name);
+          changed=true;
+        }
+      }
+    }
+    if(changed){
+      regenColors();
+      updateClassUI();
+      savePrefs();
+    }
+  }
+
+  els.modelStatus.textContent=
+    `${currentModelFile.name} · LiteRT.js · ${model.device||"unknown"} · ${boxes.length} detections`;
+
+  return boxes.map(b=>({
+    x1:Number(b.x1),y1:Number(b.y1),x2:Number(b.x2),y2:Number(b.y2),
+    score:Number(b.conf),cls:Number(b.cls),name:b.name
+  })).filter(b=>
+    [b.x1,b.y1,b.x2,b.y2,b.score,b.cls].every(Number.isFinite)
+  );
+}
+
+async function runYolo(append=false){
+  const r=rec();
+  if(!r){
+    status("Load an image before running YOLO.");
+    return;
+  }
+  if(!currentModelFile){
+    status("Select a .tflite model first.");
+    return;
+  }
+
+  try{
+    showLoading("Running LiteRT YOLO inference…",currentModelFile.name);
+    const boxes=await inferDetections();
+    hideLoading();
+
+    pushUndo();
+    if(!append){
+      r.annotations=[];
+      r.confidences=[];
+    }
+
+    for(const b of boxes){
+      r.annotations.push([b.cls,b.x1,b.y1,b.x2,b.y2]);
+      r.confidences.push(b.score);
+    }
+
+    selected=null;
+    multi.clear();
+    markDirty();
+    refreshAll();
+    status(`LiteRT YOLO: ${boxes.length} box(es) added.`);
+  }catch(e){
+    try{ hideLoading(); }catch{}
+    const detail=e?.stack||e?.message||String(e);
+    status(`Inference error: ${detail}`);
+    els.modelStatus.textContent=`Inference error: ${e?.message||e}`;
+    console.error("LiteRT inference failed:",e);
+  }
+}
+els.runYoloBtn.onclick=()=>runYolo(false);
+
+async function singleClickPrediction(x,y){
+  const r=rec();
+  if(!r||!currentModelFile)return;
+
+  try{
+    showLoading("Single-click LiteRT prediction…",currentModelFile.name);
+    const boxes=await inferDetections(0.01,0.95);
+    hideLoading();
+
+    const candidates=boxes
+      .filter(b=>x>=b.x1&&x<=b.x2&&y>=b.y1&&y<=b.y2)
+      .sort((a,b)=>b.score-a.score);
+
+    if(!candidates.length){
+      status("No detected object contains that point.");
+      return;
+    }
+
+    pushUndo();
+    const b=candidates[0];
+    r.annotations.push([b.cls,b.x1,b.y1,b.x2,b.y2]);
+    r.confidences.push(b.score);
+    selected=r.annotations.length-1;
+    markDirty();
+    refreshAll();
+  }catch(e){
+    try{ hideLoading(); }catch{}
+    status(`Single-click prediction error: ${e?.stack||e?.message||e}`);
+  }
+}
+
+/* initial */
+els.confVal.textContent=(+els.conf.value).toFixed(2);els.iouVal.textContent=(+els.iou.value).toFixed(2);
+resizeCanvas();refreshAll();
+setModelState("idle","Select one .tflite file.");
+status("Ready. Load images, then select one .tflite model. Model status will show SELECTED → LOADING → READY or LOAD FAILED.");
+</script>
+</body>
+</html>
