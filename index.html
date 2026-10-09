@@ -45,6 +45,9 @@ input[type=range]{width:100%}
 .loading.show{display:flex}
 .loadCard{background:rgba(12,18,29,.9);border:1px solid #4b5563;border-radius:13px;padding:17px 22px;text-align:center;min-width:260px}
 .spinner{width:45px;height:45px;border:5px solid rgba(255,255,255,.17);border-top-color:var(--accent);border-radius:50%;margin:0 auto 12px;animation:spin .8s linear infinite}
+.loadProgress{height:8px;background:#29313c;border-radius:999px;overflow:hidden;margin-top:12px;display:none}
+.loadProgress.show{display:block}
+.loadProgress>div{height:100%;background:var(--accent);width:0;transition:width .08s linear}
 @keyframes spin{to{transform:rotate(360deg)}}
 #contextMenu{
  position:fixed;display:none;z-index:30;min-width:170px;background:#1d2430;border:1px solid #475569;
@@ -92,18 +95,16 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 <body>
 <div class="app">
   <div class="topbar">
-    <div class="brand">AVAW Annotator · LiteRT <span class="badge">Build 2026-10-09a</span></div>
+    <div class="brand">AVAW Annotator · LiteRT <span class="badge">Build 2026-10-09g</span></div>
     <label class="small" for="taskMode">Task</label>
     <select id="taskMode" title="Annotation format for the current dataset">
       <option value="detect">Detection · BBOX</option>
       <option value="segment">Segmentation · Polygon</option>
     </select>
     <button id="openDirBtn" title="Open one working folder, load its images and YOLO .txt annotations, and save annotations back into the same folder">Open Working Folder</button>
-    <button id="loadFolderBtn" title="Import images and annotations for editing without choosing the save destination">Import Images / Annotations</button>
-    <input id="folderInput" class="hidden" type="file" webkitdirectory multiple accept=".png,.jpg,.jpeg,.txt">
     <button id="labelsFolderBtn" title="Load matching YOLO .txt labels from a separate folder. With direct folder access, this folder also becomes the annotation output folder.">Load Labels Folder</button>
     <input id="labelsFolderInput" class="hidden" type="file" webkitdirectory multiple accept=".txt">
-    <span id="labelsFolderLabel" class="small">Labels: image/import folder</span>
+    <span id="labelsFolderLabel" class="small">Labels: image folder</span>
     <button id="saveFolderBtn" title="Choose where annotation .txt files will be written when using imported files">Choose Annotation Save Folder</button>
     <span id="saveFolderLabel" class="small">Annotation output: not set</span>
     <button id="saveBtn" class="primary">Save Annotation</button>
@@ -189,6 +190,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
           <div class="spinner"></div>
           <div id="loadTitle" style="font-weight:800">Loading model…</div>
           <div id="loadText" class="small" style="margin-top:5px">Preparing WebGPU session</div>
+          <div id="loadProgress" class="loadProgress"><div id="loadProgressBar"></div></div>
         </div>
       </div>
     </main>
@@ -284,7 +286,7 @@ const COCO=["person","bicycle","car","motorcycle","airplane","bus","train","truc
 
 const $=id=>document.getElementById(id);
 const els={
- canvas:$("canvas"),stage:$("stageWrap"),taskMode:$("taskMode"),openDirBtn:$("openDirBtn"),loadFolderBtn:$("loadFolderBtn"),folderInput:$("folderInput"),
+ canvas:$("canvas"),stage:$("stageWrap"),taskMode:$("taskMode"),openDirBtn:$("openDirBtn"),
  labelsFolderBtn:$("labelsFolderBtn"),labelsFolderInput:$("labelsFolderInput"),labelsFolderLabel:$("labelsFolderLabel"),
  saveFolderBtn:$("saveFolderBtn"),saveFolderLabel:$("saveFolderLabel"),
  saveBtn:$("saveBtn"),saveAnnotatedBtn:$("saveAnnotatedBtn"),undoBtn:$("undoBtn"),helpBtn:$("helpBtn"),
@@ -304,7 +306,7 @@ const els={
  counter:$("counter"),progressBar:$("progressBar"),status:$("status"),contextMenu:$("contextMenu"),
  classesDialog:$("classesDialog"),classNamesText:$("classNamesText"),palette:$("palette"),
  cancelClassesBtn:$("cancelClassesBtn"),applyClassesBtn:$("applyClassesBtn"),helpDialog:$("helpDialog"),closeHelpBtn:$("closeHelpBtn"),
- loading:$("loading"),loadTitle:$("loadTitle"),loadText:$("loadText")
+ loading:$("loading"),loadTitle:$("loadTitle"),loadText:$("loadText"),loadProgress:$("loadProgress"),loadProgressBar:$("loadProgressBar")
 };
 const ctx=els.canvas.getContext("2d");
 
@@ -352,6 +354,7 @@ let redrawPending=false;
 function status(s){els.status.textContent=s}
 function natural(a,b){return a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"})}
 function stem(name){return name.replace(/\.[^.]+$/,"")}
+function labelKey(name){return stem(name).normalize("NFC").toLocaleLowerCase()}
 function ext(name){const m=name.toLowerCase().match(/\.[^.]+$/);return m?m[0]:""}
 function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
 function rec(){return current>=0&&current<records.length?records[current]:null}
@@ -437,7 +440,7 @@ function setProjectMode(next,{force=false,silent=false}={}){
   if(next!=="detect"&&next!=="segment")return false;
   if(next===projectMode){updateTaskUI();return true}
 
-  const hasData=records.some(r=>r.annotations.length||r.dirty);
+  const hasData=records.some(r=>r.annotations.length||r.dirty||r.pendingLabelText!==null);
   if(hasData&&!force){
     const ok=confirm(
       `Switch annotation task from ${projectMode==="detect"?"Detection":"Segmentation"} to `+
@@ -447,7 +450,7 @@ function setProjectMode(next,{force=false,silent=false}={}){
     if(!ok){els.taskMode.value=projectMode;return false}
     for(const r of records){
       r.annotations=[];r.confidences=[];r.dirty=false;
-      r.lastSavedAnnotations=[];r.lastSavedConfidences=[];
+      r.lastSavedAnnotations=[];r.lastSavedConfidences=[];r.pendingLabelText=null;
     }
   }
 
@@ -501,7 +504,7 @@ function setSaveDirectory(handle){
     : "Annotation output: not set";
 }
 function setLabelsSourceLabel(name){
-  els.labelsFolderLabel.textContent=name ? `Labels: ${name}` : "Labels: image/import folder";
+  els.labelsFolderLabel.textContent=name ? `Labels: ${name}` : "Labels: image folder";
 }
 async function chooseSaveDirectory(){
   if(!window.showDirectoryPicker){
@@ -528,24 +531,36 @@ async function filesFromDirectory(handle){
   }
   return out;
 }
+async function labelFilesFromDirectory(handle){
+  const out=[];
+  async function walk(dir){
+    for await(const [name,h] of dir.entries()){
+      if(h.kind==="file"){
+        if(ext(name)===".txt")out.push(await h.getFile());
+      }else if(h.kind==="directory"){
+        await walk(h);
+      }
+    }
+  }
+  await walk(handle);
+  return out;
+}
 els.openDirBtn.onclick=async()=>{
   try{
-    if(!window.showDirectoryPicker)throw new Error("Directory picker unavailable; use Import Images / Annotations.");
+    if(!window.showDirectoryPicker)throw new Error("Directory picker unavailable. Use a Chromium-based browser with folder access support.");
     directoryHandle=await showDirectoryPicker({mode:"readwrite"});
     labelsDirectoryHandle=directoryHandle;
     setLabelsSourceLabel(directoryHandle.name);
     setSaveDirectory(directoryHandle);
+    showLoading("Scanning image folder…",directoryHandle.name);
     const files=await filesFromDirectory(directoryHandle);
     await loadFiles(files,true);
-  }catch(e){if(e.name!=="AbortError")status(`Folder error: ${e.message}`)}
+  }catch(e){
+    hideLoading();
+    if(e.name!=="AbortError")status(`Folder error: ${e.message}`);
+  }
 };
-els.loadFolderBtn.onclick=()=>els.folderInput.click();
 els.saveFolderBtn.onclick=()=>chooseSaveDirectory();
-els.folderInput.onchange=()=>{
-  labelsDirectoryHandle=null;
-  setLabelsSourceLabel("imported with images");
-  loadFiles([...els.folderInput.files],false);
-};
 
 async function applyLabelsFiles(files,sourceName="separate folder"){
   if(!records.length){
@@ -559,15 +574,31 @@ async function applyLabelsFiles(files,sourceName="separate folder"){
   }
 
   const txtFiles=files.filter(f=>ext(f.name)===".txt"&&f.name.toLowerCase()!=="class_names.txt");
-  const txtMap=new Map(txtFiles.map(f=>[stem(f.name),f]));
+  if(!txtFiles.length){
+    status(`No YOLO .txt label files found in ${sourceName}. Existing annotations were kept.`);
+    return false;
+  }
+
+  // Match Windows/Chromium folder selections robustly: basename matching is case-insensitive.
+  const txtMap=new Map();
+  for(const f of txtFiles)txtMap.set(labelKey(f.name),f);
+
   const txtTexts=new Map();
   const kinds=new Set();
-
-  for(const [s,f] of txtMap){
+  for(const [key,f] of txtMap){
     const t=await f.text();
-    txtTexts.set(s,t);
+    txtTexts.set(key,t);
     const k=annotationKindFromText(t);
     if(k)kinds.add(k);
+  }
+
+  // Verify that this really is the label folder for the currently loaded images BEFORE clearing anything.
+  const matchingRecords=records.filter(r=>txtTexts.has(labelKey(r.name)));
+  if(!matchingRecords.length){
+    const imageExample=records[0]?.name||"(none)";
+    const labelExample=txtFiles[0]?.name||"(none)";
+    status(`No label filenames matched the loaded images. Example image: ${imageExample} · example label: ${labelExample}. Existing annotations were kept.`);
+    return false;
   }
 
   // A homogeneous external label folder defines the annotation task.
@@ -580,14 +611,21 @@ async function applyLabelsFiles(files,sourceName="separate folder"){
     if(names.length){classNames=names;regenColors();updateClassUI();savePrefs()}
   }
 
-  let matched=0;
+  let matched=0,parsed=0;
   for(const r of records){
+    const text=txtTexts.get(labelKey(r.name));
     r.annotations=[];
     r.confidences=[];
-    const text=txtTexts.get(r.stem);
+    r.pendingLabelText=text!==undefined?text:null;
     if(text!==undefined){
-      parseYoloText(text,r);
       matched++;
+      parsed+=countYoloTextAnnotations(text,projectMode);
+      // Already-viewed images have dimensions, so update them immediately.
+      // Unopened images keep the tiny label text pending until their image is decoded.
+      if(r.bitmap){
+        parseYoloText(text,r);
+        r.pendingLabelText=null;
+      }
     }
     r.dirty=false;
     r.lastSavedAnnotations=r.annotations.map(a=>a.slice());
@@ -600,9 +638,9 @@ async function applyLabelsFiles(files,sourceName="separate folder"){
   refreshAll();
 
   if(kinds.size>1){
-    status(`Loaded labels for ${matched}/${records.length} images from ${sourceName}. Mixed BBOX/segmentation labels found; current ${projectMode==="detect"?"BBOX":"segmentation"} mode was retained.`);
+    status(`Loaded labels for ${matched}/${records.length} images (${parsed} annotations) from ${sourceName}. Mixed BBOX/segmentation labels found; current ${projectMode==="detect"?"BBOX":"segmentation"} mode was retained.`);
   }else{
-    status(`Loaded labels for ${matched}/${records.length} images from ${sourceName} · ${projectMode==="detect"?"Detection / BBOX":"Segmentation / Polygon"}.`);
+    status(`Loaded labels for ${matched}/${records.length} images (${parsed} annotations) from ${sourceName} · ${projectMode==="detect"?"Detection / BBOX":"Segmentation / Polygon"}.`);
   }
   return true;
 }
@@ -616,12 +654,11 @@ els.labelsFolderBtn.onclick=async()=>{
   if(window.showDirectoryPicker){
     try{
       const handle=await showDirectoryPicker({mode:"readwrite"});
-      const files=await filesFromDirectory(handle);
+      const files=await labelFilesFromDirectory(handle);
       const applied=await applyLabelsFiles(files,handle.name);
       if(applied){
         labelsDirectoryHandle=handle;
         setSaveDirectory(handle);
-        status(`Loaded labels from ${handle.name}. Annotation output also set to this folder.`);
       }
       return;
     }catch(e){
@@ -638,8 +675,7 @@ els.labelsFolderInput.onchange=async()=>{
   labelsDirectoryHandle=null;
   const rel=files[0].webkitRelativePath||"";
   const sourceName=rel.includes("/")?rel.split("/")[0]:"selected labels folder";
-  const applied=await applyLabelsFiles(files,sourceName);
-  if(applied)status(`Loaded labels from ${sourceName}. Choose Annotation Save Folder if you want to write changes there.`);
+  await applyLabelsFiles(files,sourceName);
   els.labelsFolderInput.value="";
 };
 
@@ -648,66 +684,147 @@ function annotationKindFromText(text){
     const s=line.trim();if(!s)continue;
     const p=s.split(/\s+/).map(Number);
     if(p.some(v=>!Number.isFinite(v)))continue;
-    if(p.length===5)return "detect";
+    // Detection labels may be standard YOLO (class xc yc w h) or
+    // prediction labels with a sixth confidence value appended.
+    if(p.length===5||p.length===6)return "detect";
     if(p.length>=7&&p.length%2===1)return "segment";
   }
   return null;
 }
+function countYoloTextAnnotations(text,mode=projectMode){
+  let count=0;
+  for(const line of text.split(/\r?\n/)){
+    const s=line.trim();if(!s)continue;
+    const p=s.split(/\s+/).map(Number);
+    if(p.some(v=>!Number.isFinite(v)))continue;
+    if(mode==="detect"){
+      if(p.length===5||p.length===6)count++;
+    }else if(p.length>=7&&p.length%2===1){
+      count++;
+    }
+  }
+  return count;
+}
+
+async function ensureRecordDecoded(r,{showOverlay=true,immediate=false}={}){
+  if(!r||r.bitmap)return true;
+
+  let overlayShown=false;
+  let overlayTimer=null;
+  const revealOverlay=()=>{
+    if(r.bitmap)return;
+    showLoading("Loading image…",r.name);
+    overlayShown=true;
+  };
+
+  if(showOverlay){
+    if(immediate)revealOverlay();
+    else overlayTimer=setTimeout(revealOverlay,120);
+  }
+
+  try{
+    if(!r.decodePromise){
+      r.decodePromise=(async()=>{
+        const bm=await createImageBitmap(r.file);
+        r.bitmap=bm;
+        r.width=bm.width;
+        r.height=bm.height;
+
+        if(r.pendingLabelText!==null){
+          parseYoloText(r.pendingLabelText,r);
+          r.pendingLabelText=null;
+          r.lastSavedAnnotations=r.annotations.map(a=>a.slice());
+          r.lastSavedConfidences=r.confidences.slice();
+        }
+        return true;
+      })().finally(()=>{r.decodePromise=null});
+    }
+    await r.decodePromise;
+    return true;
+  }finally{
+    if(overlayTimer)clearTimeout(overlayTimer);
+    if(overlayShown)hideLoading();
+  }
+}
+
+function prefetchNextImage(idx){
+  const nextRecord=records[idx+1];
+  if(!nextRecord||nextRecord.bitmap||nextRecord.decodePromise)return;
+  const run=()=>ensureRecordDecoded(nextRecord,{showOverlay:false}).catch(e=>{
+    console.warn(`Background image preload failed for ${nextRecord.name}:`,e);
+  });
+  if("requestIdleCallback" in window)requestIdleCallback(run,{timeout:1200});
+  else setTimeout(run,250);
+}
+
 async function loadFiles(files,fromDirectory=false){
-  if(!files.length)return;
+  if(!files.length){hideLoading();return}
   const imageFiles=files.filter(f=>[".png",".jpg",".jpeg"].includes(ext(f.name))).sort((a,b)=>natural(a.name,b.name));
-  const txtFiles=files.filter(f=>ext(f.name)===".txt"&&f.name.toLowerCase()!=="class_names.txt");
-  const txtMap=new Map(txtFiles.map(f=>[stem(f.name),f]));
-  const txtTexts=new Map();
-  const kinds=new Set();
+  if(!imageFiles.length){hideLoading();status("No PNG/JPG/JPEG images found.");return}
 
-  for(const [s,f] of txtMap){
-    const t=await f.text();txtTexts.set(s,t);
-    const k=annotationKindFromText(t);if(k)kinds.add(k);
-  }
-  if(kinds.size===1)setProjectMode([...kinds][0],{force:true,silent:true});
+  showLoading("Loading image folder…",`Preparing ${imageFiles.length} image records`);
+  await new Promise(requestAnimationFrame);
 
-  const classFile=files.find(f=>f.name.toLowerCase()==="class_names.txt");
-  if(classFile){
-    const t=await classFile.text();
-    const names=t.split(/\r?\n|,/).map(s=>s.trim()).filter(Boolean);
-    if(names.length){classNames=names;regenColors();updateClassUI();savePrefs()}
-  }
+  try{
+    const txtFiles=files.filter(f=>ext(f.name)===".txt"&&f.name.toLowerCase()!=="class_names.txt");
+    const txtMap=new Map(txtFiles.map(f=>[labelKey(f.name),f]));
+    const txtTexts=new Map();
+    const kinds=new Set();
 
-  const newRecords=[];
-  for(const file of imageFiles){
-    const bm=await createImageBitmap(file);
-    const r={file,name:file.name,stem:stem(file.name),bitmap:bm,width:bm.width,height:bm.height,
+    for(const [key,f] of txtMap){
+      const t=await f.text();txtTexts.set(key,t);
+      const k=annotationKindFromText(t);if(k)kinds.add(k);
+    }
+    if(kinds.size===1)setProjectMode([...kinds][0],{force:true,silent:true});
+
+    const classFile=files.find(f=>f.name.toLowerCase()==="class_names.txt");
+    if(classFile){
+      const t=await classFile.text();
+      const names=t.split(/\r?\n|,/).map(s=>s.trim()).filter(Boolean);
+      if(names.length){classNames=names;regenColors();updateClassUI();savePrefs()}
+    }
+
+    // Keep only lightweight File objects and label text here. Pixel decoding is lazy:
+    // the current image is decoded on first display, then the next image is prefetched while idle.
+    const newRecords=imageFiles.map(file=>({
+      file,name:file.name,stem:stem(file.name),bitmap:null,width:0,height:0,decodePromise:null,
+      pendingLabelText:txtTexts.has(labelKey(file.name))?txtTexts.get(labelKey(file.name)):null,
       annotations:[],confidences:[],dirty:false,
-      lastSavedAnnotations:[],lastSavedConfidences:[]};
-    const text=txtTexts.get(r.stem);
-    if(text!==undefined)parseYoloText(text,r);
-    r.lastSavedAnnotations=r.annotations.map(a=>a.slice());
-    r.lastSavedConfidences=r.confidences.slice();
-    newRecords.push(r);
-  }
-  if(!newRecords.length){status("No PNG/JPG/JPEG images found.");return}
+      lastSavedAnnotations:[],lastSavedConfidences:[]
+    }));
 
-  records=newRecords;current=0;selected=null;selectedVertex=null;multi.clear();undoStack=[];
-  await showRecord(0,false);
-  if(kinds.size>1){
-    status(`Loaded ${records.length} images. Mixed BBOX and segmentation .txt files were found; only ${projectMode==="detect"?"BBOX":"segmentation"} lines were imported.`);
-  }else{
-    status(`Loaded ${records.length} images · ${projectMode==="detect"?"Detection / BBOX":"Segmentation / Polygon"}.`);
+    records=newRecords;current=-1;selected=null;selectedVertex=null;multi.clear();undoStack=[];
+    hideLoading();
+    await showRecord(0,false,{immediateLoad:true});
+    if(kinds.size>1){
+      status(`Loaded ${records.length} image references. Mixed BBOX and segmentation .txt files were found; only ${projectMode==="detect"?"BBOX":"segmentation"} lines are used.`);
+    }else{
+      status(`Loaded ${records.length} images · ${projectMode==="detect"?"Detection / BBOX":"Segmentation / Polygon"}. Images decode on demand.`);
+    }
+  }catch(e){
+    hideLoading();
+    status(`Image loading failed: ${e?.message||e}`);
+    throw e;
   }
 }
 
 function parseYoloText(text,r){
   r.annotations=[];r.confidences=[];
   for(const line of text.split(/\r?\n/)){
-    const p=line.trim().split(/\s+/).map(Number);
+    const s=line.trim();if(!s)continue;
+    const p=s.split(/\s+/).map(Number);
     if(p.some(v=>!Number.isFinite(v)))continue;
     if(projectMode==="detect"){
-      if(p.length!==5)continue;
+      // Accept both:
+      //   class xc yc w h
+      //   class xc yc w h confidence
+      // Ultralytics prediction exports commonly use the second form.
+      if(p.length!==5&&p.length!==6)continue;
       const [cls,xc,yc,w,h]=p;
+      const confidence=p.length===6?p[5]:null;
       const bw=w*r.width,bh=h*r.height,cx=xc*r.width,cy=yc*r.height;
       r.annotations.push([Math.trunc(cls),cx-bw/2,cy-bh/2,cx+bw/2,cy+bh/2]);
-      r.confidences.push(null);
+      r.confidences.push(confidence);
     }else{
       if(p.length<7||p.length%2!==1)continue;
       const a=[Math.trunc(p[0])];
@@ -777,8 +894,10 @@ function discardUnsavedAnnotations(r){
   r.confidences=(r.lastSavedConfidences||[]).slice();
   r.dirty=false;
 }
-async function showRecord(idx,doAuto=true){
+let navigationSequence=0;
+async function showRecord(idx,doAuto=true,{immediateLoad=false}={}){
   if(idx<0||idx>=records.length)return;
+  const navId=++navigationSequence;
   const previous=rec();
   if(doAuto&&previous?.dirty){
     if(els.autoSave.checked){
@@ -786,10 +905,21 @@ async function showRecord(idx,doAuto=true){
       if(!saved){status("Navigation cancelled because the annotation was not saved.");return}
     }else discardUnsavedAnnotations(previous);
   }
+
+  const target=records[idx];
+  try{
+    await ensureRecordDecoded(target,{showOverlay:true,immediate:immediateLoad});
+  }catch(e){
+    status(`Could not load ${target.name}: ${e?.message||e}`);
+    return;
+  }
+  if(navId!==navigationSequence)return;
+
   cancelDraftPolygon(false);
   current=idx;selected=null;selectedVertex=null;multi.clear();undoStack=[];mode="select";
   els.addBoxBtn.classList.remove("active");
   resetView();refreshAll();
+  prefetchNextImage(idx);
 }
 function next(){if(current+1<records.length)showRecord(current+1)}
 function prev(){if(current>0)showRecord(current-1)}
@@ -1024,9 +1154,9 @@ function drawBoxesToContext(x,r,s,ox,oy,interactive){
     x.lineWidth=isSel?3:2;x.strokeRect(X,Y,W,H);
     const name=classNames[cl]??`Class ${cl}`,cf=r.confidences[i];
     let lab=`${cl}: ${name}`;if(els.showConf.checked&&cf!==null&&cf!==undefined)lab+=` ${typeof cf==="number"?cf.toFixed(2):cf}`;
-    const tw=x.measureText(lab).width,pad=3,th=16;
-    x.fillStyle="rgba(0,0,0,.70)";x.fillRect(X,Y-th,tw+pad*2,th);
-    x.fillStyle=color;x.fillText(lab,X+pad,Y-th+1);
+    const tw=x.measureText(lab).width,padX=6,padY=3,th=18;
+    x.fillStyle="rgba(0,0,0,.70)";x.fillRect(X,Y-th,Math.ceil(tw)+padX*2,th);
+    x.fillStyle=color;x.fillText(lab,X+padX,Y-th+padY);
     if(interactive&&i===selected){
       const hs=8;for(const [cx,cy] of [[X,Y],[X+W,Y],[X,Y+H],[X+W,Y+H]]){x.fillStyle="#facc15";x.fillRect(cx-hs/2,cy-hs/2,hs,hs)}
     }
@@ -1047,8 +1177,8 @@ function drawPolygonsToContext(x,r,s,ox,oy,interactive){
     const p0=pts[0],X=ox+p0.x*s,Y=oy+p0.y*s;
     const name=classNames[cl]??`Class ${cl}`,cf=r.confidences[i];
     let lab=`${cl}: ${name}`;if(els.showConf.checked&&cf!==null&&cf!==undefined)lab+=` ${typeof cf==="number"?cf.toFixed(2):cf}`;
-    const tw=x.measureText(lab).width,pad=3,th=16;
-    x.fillStyle="rgba(0,0,0,.70)";x.fillRect(X,Y-th,tw+pad*2,th);x.fillStyle=color;x.fillText(lab,X+pad,Y-th+1);
+    const tw=x.measureText(lab).width,padX=6,padY=3,th=18;
+    x.fillStyle="rgba(0,0,0,.70)";x.fillRect(X,Y-th,Math.ceil(tw)+padX*2,th);x.fillStyle=color;x.fillText(lab,X+padX,Y-th+padY);
 
     if(interactive&&i===selected){
       pts.forEach((p,j)=>{
@@ -1492,6 +1622,8 @@ updateRuntimeEnvironment();
 function showLoading(title,text=""){
   els.loadTitle.textContent=title;
   els.loadText.textContent=text;
+  els.loadProgress.classList.remove("show");
+  els.loadProgressBar.style.width="0%";
   els.loading.classList.add("show");
 
   loadStarted=performance.now();
@@ -1499,12 +1631,26 @@ function showLoading(title,text=""){
 
   loadClock=setInterval(()=>{
     const elapsed=((performance.now()-loadStarted)/1000).toFixed(1);
-    els.loadText.textContent=`${text}\n${elapsed} s elapsed`;
+    els.loadText.textContent=`${text} · ${elapsed} s elapsed`;
   },100);
+}
+
+function showImageLoading(done,total,text=""){
+  if(loadClock){clearInterval(loadClock);loadClock=null}
+  const safeTotal=Math.max(1,total||0);
+  const safeDone=clamp(done||0,0,safeTotal);
+  const pct=100*safeDone/safeTotal;
+  els.loadTitle.textContent="Loading images…";
+  els.loadText.textContent=text||`${safeDone} / ${safeTotal} images`;
+  els.loadProgress.classList.add("show");
+  els.loadProgressBar.style.width=`${pct}%`;
+  els.loading.classList.add("show");
 }
 
 function hideLoading(){
   els.loading.classList.remove("show");
+  els.loadProgress.classList.remove("show");
+  els.loadProgressBar.style.width="0%";
   if(loadClock){
     clearInterval(loadClock);
     loadClock=null;
@@ -1891,7 +2037,7 @@ setSaveDirectory(null);
 updateTaskUI();
 resizeCanvas();refreshAll();
 setModelState("idle","Select one .tflite file.");
-status("Ready · Build 2026-10-09a. Choose Detection or Segmentation, then open a working folder.");
+status("Ready · Build 2026-10-09g. Choose Detection or Segmentation, then open a working folder.");
 </script>
 </body>
 </html>
