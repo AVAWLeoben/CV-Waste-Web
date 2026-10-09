@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AVAW CVAT BBOX — LiteRT Browser Edition</title>
+<title>AVAW Annotator — Detection & Segmentation · LiteRT</title>
 <style>
 :root{
   --bg:#0e1116;--panel:#171b22;--panel2:#202630;--border:#303947;
@@ -92,7 +92,12 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 <body>
 <div class="app">
   <div class="topbar">
-    <div class="brand">AVAW CVAT BBOX · LiteRT</div>
+    <div class="brand">AVAW Annotator · LiteRT <span class="badge">Build 2026-10-09a</span></div>
+    <label class="small" for="taskMode">Task</label>
+    <select id="taskMode" title="Annotation format for the current dataset">
+      <option value="detect">Detection · BBOX</option>
+      <option value="segment">Segmentation · Polygon</option>
+    </select>
     <button id="openDirBtn" title="Open one working folder, load its images and YOLO .txt annotations, and save annotations back into the same folder">Open Working Folder</button>
     <button id="loadFolderBtn" title="Import images and annotations for editing without choosing the save destination">Import Images / Annotations</button>
     <input id="folderInput" class="hidden" type="file" webkitdirectory multiple accept=".png,.jpg,.jpeg,.txt">
@@ -121,7 +126,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
       </div>
 
       <div class="section">
-        <h3>Annotation</h3>
+        <h3 id="annotationHeading">Annotation · Detection</h3>
         <label class="small">Class</label>
         <select id="classSelect" style="width:100%;padding:7px"></select>
         <div class="row">
@@ -133,8 +138,34 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
           <button id="pasteBtn" class="grow">Paste</button>
         </div>
         <label class="row small"><input id="autoSave" type="checkbox"> Auto save on navigation</label>
-<div class="small">Off: unsaved box edits are discarded when leaving the image.</div>
+<div class="small">Off: unsaved annotation edits are discarded when leaving the image.</div>
         <label class="row small"><input id="showConf" type="checkbox" checked> Show confidence</label>
+      </div>
+
+      <div class="section hidden" id="segTools">
+        <h3>Polygon tools</h3>
+        <label class="small">Polygon drawing mode</label>
+        <div id="polyDrawToggle" class="row" style="margin:4px 0 8px">
+          <button id="polyClickModeBtn" class="grow active" type="button">Click points</button>
+          <button id="polyDragModeBtn" class="grow" type="button">Drag / freehand</button>
+        </div>
+        <input id="polyDrawMode" type="hidden" value="click">
+        <div class="row">
+          <button id="finishPolyBtn" class="grow">Finish polygon</button>
+          <button id="addVertexBtn" class="grow">Add vertex</button>
+        </div>
+        <div class="row">
+          <button id="deleteVertexBtn" class="grow">Delete vertex</button>
+          <button id="simplifyBtn" class="grow">Simplify selected</button>
+        </div>
+        <label class="small">Simplify tolerance <b id="simplifyVal">2</b> px</label>
+        <input id="simplifyTol" type="range" min="0" max="20" step="1" value="2">
+        <button id="simplifyAllBtn" style="width:100%;margin-top:6px">Simplify all polygons</button>
+        <button id="mergeBtn" style="width:100%;margin-top:6px">Merge selected polygons</button>
+        <button id="containedBtn" style="width:100%;margin-top:6px">Delete contained polygons</button>
+        <div id="polyDrawHint" class="small" style="margin-top:6px">
+          New polygon: click vertices, then double-click, press Enter, or use Finish polygon.
+        </div>
       </div>
 
       <div class="section">
@@ -164,7 +195,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 
     <aside class="sidebar right">
       <div class="section">
-        <h3>Boxes <span id="boxCount" class="badge">0</span></h3>
+        <h3><span id="objectTypeLabel">Boxes</span> <span id="boxCount" class="badge">0</span></h3>
         <div id="boxList" class="list"></div>
       </div>
 
@@ -189,7 +220,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
         <input id="iou" type="range" min="0.10" max="0.95" step="0.01" value="0.80">
         <button id="runYoloBtn" class="primary" style="width:100%;margin-top:7px">Run YOLO inference</button>
         <div id="modelStatus" class="small" style="margin-top:7px">No LiteRT model loaded.</div>
-        <div class="small" style="margin-top:7px">
+        <div id="predictionHint" class="small" style="margin-top:7px">
           Alt-click on the image: low-threshold prediction and add the best detected box containing that point.
         </div>
       </div>
@@ -228,12 +259,15 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 <dialog id="helpDialog">
   <h3>Browser controls</h3>
   <div class="small" style="line-height:1.7">
-    <b>Left click</b>: select box · <b>drag</b>: move · drag yellow corner handle: resize<br>
-    <b>N</b>: new box, then drag · <b>Delete</b>: delete selection · <b>Ctrl+A</b>: select all<br>
-    <b>Ctrl+click</b>: multi-select · drag empty space: marquee-select contained boxes<br>
-    <b>Ctrl+C / Ctrl+V</b>: copy/paste boxes · <b>Q/A / E/D / ←/→</b>: previous/next image<br>
-    <b>S</b>: save annotation · <b>Y</b>: run LiteRT YOLO · <b>Alt+click</b>: single-click YOLO prediction<br>
-    <b>Mouse wheel</b>: zoom at cursor · <b>middle-drag</b>: pan · <b>0</b>: reset view
+    <b>Shared:</b> mouse wheel = zoom at cursor · middle-drag = pan · <b>0</b> = reset view<br>
+    <b>Ctrl+click</b> = multi-select · drag empty space = marquee select · <b>Ctrl+A</b> = select all<br>
+    <b>Ctrl+C / Ctrl+V</b> = copy/paste · <b>Delete</b> = delete object(s) · <b>S</b> = save<br>
+    <b>Q/A / E/D / ←/→</b> = previous/next image<br>
+    <b>Y</b> = run LiteRT YOLO · <b>Alt+click</b> = add best prediction containing the point<br><br>
+    <b>Detection:</b> <b>N</b> = new box, then drag · drag yellow corner handles = resize<br>
+    <b>Segmentation:</b> choose <b>Click vertices</b> or <b>Freehand drag</b> · <b>N</b> = new polygon<br>
+    Click mode: place vertices, <b>Enter</b>/double-click = finish · Drag mode: hold and draw, release = finish · <b>Esc</b> = cancel<br>
+    Click a polygon vertex to select/drag it · <b>Insert/I</b> = insert vertex · <b>Backspace</b> = delete selected vertex.
   </div>
   <div class="row" style="justify-content:flex-end;margin-top:12px"><button id="closeHelpBtn">Close</button></div>
 </dialog>
@@ -250,17 +284,22 @@ const COCO=["person","bicycle","car","motorcycle","airplane","bus","train","truc
 
 const $=id=>document.getElementById(id);
 const els={
- canvas:$("canvas"),stage:$("stageWrap"),openDirBtn:$("openDirBtn"),loadFolderBtn:$("loadFolderBtn"),folderInput:$("folderInput"),
+ canvas:$("canvas"),stage:$("stageWrap"),taskMode:$("taskMode"),openDirBtn:$("openDirBtn"),loadFolderBtn:$("loadFolderBtn"),folderInput:$("folderInput"),
  labelsFolderBtn:$("labelsFolderBtn"),labelsFolderInput:$("labelsFolderInput"),labelsFolderLabel:$("labelsFolderLabel"),
  saveFolderBtn:$("saveFolderBtn"),saveFolderLabel:$("saveFolderLabel"),
  saveBtn:$("saveBtn"),saveAnnotatedBtn:$("saveAnnotatedBtn"),undoBtn:$("undoBtn"),helpBtn:$("helpBtn"),
  imageList:$("imageList"),prevBtn:$("prevBtn"),nextBtn:$("nextBtn"),jumpInput:$("jumpInput"),
- classSelect:$("classSelect"),addBoxBtn:$("addBoxBtn"),deleteBtn:$("deleteBtn"),copyBtn:$("copyBtn"),pasteBtn:$("pasteBtn"),
+ classSelect:$("classSelect"),annotationHeading:$("annotationHeading"),addBoxBtn:$("addBoxBtn"),deleteBtn:$("deleteBtn"),copyBtn:$("copyBtn"),pasteBtn:$("pasteBtn"),
+ segTools:$("segTools"),polyDrawMode:$("polyDrawMode"),polyDrawHint:$("polyDrawHint"),
+ polyClickModeBtn:$("polyClickModeBtn"),polyDragModeBtn:$("polyDragModeBtn"),
+ finishPolyBtn:$("finishPolyBtn"),addVertexBtn:$("addVertexBtn"),deleteVertexBtn:$("deleteVertexBtn"),
+ simplifyBtn:$("simplifyBtn"),simplifyAllBtn:$("simplifyAllBtn"),mergeBtn:$("mergeBtn"),containedBtn:$("containedBtn"),
+ simplifyTol:$("simplifyTol"),simplifyVal:$("simplifyVal"),
  autoSave:$("autoSave"),showConf:$("showConf"),dedupeBtn:$("dedupeBtn"),deleteAllBtn:$("deleteAllBtn"),
  flipHBtn:$("flipHBtn"),flipVBtn:$("flipVBtn"),viewportPngBtn:$("viewportPngBtn"),
- boxList:$("boxList"),boxCount:$("boxCount"),classesBtn:$("classesBtn"),
+ boxList:$("boxList"),boxCount:$("boxCount"),objectTypeLabel:$("objectTypeLabel"),classesBtn:$("classesBtn"),
  modelInput:$("modelInput"),modelFileName:$("modelFileName"),loadModelBtn:$("loadModelBtn"),conf:$("conf"),confVal:$("confVal"),
- iou:$("iou"),iouVal:$("iouVal"),runYoloBtn:$("runYoloBtn"),modelStatus:$("modelStatus"),
+ iou:$("iou"),iouVal:$("iouVal"),runYoloBtn:$("runYoloBtn"),modelStatus:$("modelStatus"),predictionHint:$("predictionHint"),
  backendStat:$("backendStat"),preTime:$("preTime"),inferTime:$("inferTime"),postTime:$("postTime"),runtimeEnv:$("runtimeEnv"),
  counter:$("counter"),progressBar:$("progressBar"),status:$("status"),contextMenu:$("contextMenu"),
  classesDialog:$("classesDialog"),classNamesText:$("classNamesText"),palette:$("palette"),
@@ -282,19 +321,29 @@ window.addEventListener("unhandledrejection",ev=>{
 
 let directoryHandle=null;
 let labelsDirectoryHandle=null;
-let saveDirectoryHandle=null;   // reused for all annotation writes during this page session
-let records=[];                  // {file,stem,name,bitmap,width,height,annotations,confidences,dirty,txtHandle}
+let saveDirectoryHandle=null;
+let records=[]; // image records; annotations are BBOX or polygon arrays depending on projectMode
 let current=-1;
+let projectMode="detect"; // detect | segment
 let classNames=[...COCO];
 let classColors=[];
 let selected=null,multi=new Set(),clipboard=[];
+let selectedVertex=null;
 let undoStack=[];
-let mode="select";               // select | add
-let drag=null, marquee=null, pan=null;
-let fitScale=1, zoom=1, offsetX=0, offsetY=0;
-let currentModelFile=null;       // selected .tflite File
-let currentModel=null;           // loaded @ultralytics/yolo model
-let modelLoadState="idle";       // idle | selected | loading | ready | error
+let mode="select"; // select | add | polyAdd
+let draftPolygon=[];
+let draftCursor=null;
+let draftUndoPushed=false;
+let freehandDrawing=false;
+let lastPolyClickTime=0;
+let lastPolyClickCanvas=null;
+const POLY_DOUBLE_CLICK_MS=420;
+const POLY_DOUBLE_CLICK_PX=12;
+let drag=null,marquee=null,pan=null;
+let fitScale=1,zoom=1,offsetX=0,offsetY=0;
+let currentModelFile=null;
+let currentModel=null;
+let modelLoadState="idle";
 let YOLO=null;
 let runtimeLoadPromise=null;
 let loadClock=null,loadStarted=0;
@@ -303,38 +352,114 @@ let redrawPending=false;
 function status(s){els.status.textContent=s}
 function natural(a,b){return a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"})}
 function stem(name){return name.replace(/\.[^.]+$/,"")}
-function ext(name){const m=name.match(/(\.[^.]+)$/);return m?m[1].toLowerCase():""}
+function ext(name){const m=name.toLowerCase().match(/\.[^.]+$/);return m?m[0]:""}
 function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
-function hex(rgb){return "#"+rgb.map(v=>v.toString(16).padStart(2,"0")).join("")}
+function rec(){return current>=0&&current<records.length?records[current]:null}
+function hex(rgb){return "#"+rgb.map(v=>Math.round(clamp(v,0,255)).toString(16).padStart(2,"0")).join("")}
 function hsvColor(i,n){
-  const h=(i/Math.max(1,n))*6,c=1,x=c*(1-Math.abs(h%2-1));let r=0,g=0,b=0;
-  if(h<1)[r,g,b]=[c,x,0];else if(h<2)[r,g,b]=[x,c,0];else if(h<3)[r,g,b]=[0,c,x];
-  else if(h<4)[r,g,b]=[0,x,c];else if(h<5)[r,g,b]=[x,0,c];else [r,g,b]=[c,0,x];
-  return [Math.round(r*255),Math.round(g*255),Math.round(b*255)];
+  const h=(i/Math.max(1,n))*360,s=.72,v=.95,c=v*s,x=c*(1-Math.abs((h/60)%2-1)),m=v-c;
+  let q;if(h<60)q=[c,x,0];else if(h<120)q=[x,c,0];else if(h<180)q=[0,c,x];
+  else if(h<240)q=[0,x,c];else if(h<300)q=[x,0,c];else q=[c,0,x];
+  return q.map(z=>Math.round((z+m)*255));
 }
-function regenColors(){
-  const old=classColors.slice();
-  classColors=classNames.map((_,i)=>old[i]||hsvColor(i,classNames.length));
-}
-regenColors();
+function regenColors(){classColors=classNames.map((_,i)=>hsvColor(i,classNames.length))}
 
-function rec(){return current>=0?records[current]:null}
 function savePrefs(){
-  localStorage.setItem("avaw_bbox_browser",JSON.stringify({
-    classNames,classColors,autoSave:els.autoSave.checked,showConf:els.showConf.checked,
-    conf:+els.conf.value,iou:+els.iou.value
+  localStorage.setItem("avaw_annotator_browser",JSON.stringify({
+    classNames,classColors,projectMode,
+    autoSave:els.autoSave.checked,showConf:els.showConf.checked,
+    conf:+els.conf.value,iou:+els.iou.value,simplifyTol:+els.simplifyTol.value,
+    polyDrawMode:els.polyDrawMode.value
   }));
 }
 function loadPrefs(){
   try{
-    const p=JSON.parse(localStorage.getItem("avaw_bbox_browser")||"{}");
+    const p=JSON.parse(localStorage.getItem("avaw_annotator_browser")
+      ||localStorage.getItem("avaw_bbox_browser")||"{}");
     if(Array.isArray(p.classNames)&&p.classNames.length)classNames=p.classNames;
     if(Array.isArray(p.classColors)&&p.classColors.length)classColors=p.classColors;else regenColors();
-    els.autoSave.checked=!!p.autoSave;els.showConf.checked=p.showConf!==false;
-    if(p.conf)els.conf.value=p.conf;if(p.iou)els.iou.value=p.iou;
-  }catch{}
+    if(p.projectMode==="segment"||p.projectMode==="detect")projectMode=p.projectMode;
+    els.autoSave.checked=!!p.autoSave;
+    els.showConf.checked=p.showConf!==false;
+    if(p.conf)els.conf.value=p.conf;
+    if(p.iou)els.iou.value=p.iou;
+    if(Number.isFinite(+p.simplifyTol))els.simplifyTol.value=+p.simplifyTol;
+    if(p.polyDrawMode==="drag"||p.polyDrawMode==="click")els.polyDrawMode.value=p.polyDrawMode;
+  }catch{regenColors()}
 }
 loadPrefs();
+
+function objectWord(plural=false){
+  if(projectMode==="detect")return plural?"boxes":"box";
+  return plural?"polygons":"polygon";
+}
+function cancelDraftPolygon(removeUndo=true){
+  if(removeUndo&&draftUndoPushed&&undoStack.length)undoStack.pop();
+  draftUndoPushed=false;
+  freehandDrawing=false;
+  lastPolyClickTime=0;
+  lastPolyClickCanvas=null;
+  draftPolygon=[];
+  draftCursor=null;
+  if(mode==="polyAdd")mode="select";
+  els.addBoxBtn.classList.remove("active");
+  requestDraw();
+}
+function updateTaskUI(){
+  els.taskMode.value=projectMode;
+  els.annotationHeading.textContent=projectMode==="detect"?"Annotation · Detection":"Annotation · Segmentation";
+  els.addBoxBtn.textContent=projectMode==="detect"?"New box":"New polygon";
+  els.objectTypeLabel.textContent=projectMode==="detect"?"Boxes":"Polygons";
+  els.dedupeBtn.textContent=projectMode==="detect"?"Delete duplicate boxes":"Delete duplicate polygons";
+  els.deleteAllBtn.textContent=projectMode==="detect"?"Delete all boxes":"Delete all polygons";
+  els.segTools.classList.toggle("hidden",projectMode!=="segment");
+  els.runYoloBtn.textContent=projectMode==="detect"?"Run YOLO detection":"Run YOLO segmentation";
+  els.predictionHint.textContent=projectMode==="detect"
+    ?"Alt-click: low-threshold inference and add the best detected box containing that point."
+    :"Alt-click: run segmentation and add the best predicted polygon containing that point.";
+  els.simplifyVal.textContent=String(+els.simplifyTol.value);
+  updatePolygonDrawHint();
+}
+function updatePolygonDrawHint(){
+  if(!els.polyDrawHint)return;
+  const dragMode=els.polyDrawMode.value==="drag";
+  els.polyClickModeBtn.classList.toggle("active",!dragMode);
+  els.polyDragModeBtn.classList.toggle("active",dragMode);
+  if(dragMode){
+    els.polyDrawHint.textContent="Drag / freehand: press and hold the left mouse button, trace the boundary, then release to finish.";
+    els.finishPolyBtn.disabled=true;
+  }else{
+    els.polyDrawHint.textContent="Click points: click polygon vertices. Double-click the final point, press Enter, or use Finish polygon.";
+    els.finishPolyBtn.disabled=false;
+  }
+}
+function setProjectMode(next,{force=false,silent=false}={}){
+  if(next!=="detect"&&next!=="segment")return false;
+  if(next===projectMode){updateTaskUI();return true}
+
+  const hasData=records.some(r=>r.annotations.length||r.dirty);
+  if(hasData&&!force){
+    const ok=confirm(
+      `Switch annotation task from ${projectMode==="detect"?"Detection":"Segmentation"} to `+
+      `${next==="detect"?"Detection":"Segmentation"}?\n\n`+
+      `The currently loaded in-memory annotations will be cleared. Files on disk are not changed until you save.`
+    );
+    if(!ok){els.taskMode.value=projectMode;return false}
+    for(const r of records){
+      r.annotations=[];r.confidences=[];r.dirty=false;
+      r.lastSavedAnnotations=[];r.lastSavedConfidences=[];
+    }
+  }
+
+  cancelDraftPolygon(false);
+  projectMode=next;
+  selected=null;selectedVertex=null;multi.clear();undoStack=[];mode="select";
+  updateTaskUI();savePrefs();refreshAll();
+  if(!silent)status(`Annotation task: ${projectMode==="detect"?"Detection / BBOX":"Segmentation / Polygon"}.`);
+  return true;
+}
+els.taskMode.onchange=()=>setProjectMode(els.taskMode.value);
+updateTaskUI();
 
 function updateClassUI(){
   els.classSelect.innerHTML="";
@@ -375,11 +500,9 @@ function setSaveDirectory(handle){
     ? `Annotation output: ${saveDirectoryHandle.name}`
     : "Annotation output: not set";
 }
-
 function setLabelsSourceLabel(name){
   els.labelsFolderLabel.textContent=name ? `Labels: ${name}` : "Labels: image/import folder";
 }
-
 async function chooseSaveDirectory(){
   if(!window.showDirectoryPicker){
     status("Direct folder writing is unavailable in this browser. Use a Chromium-based browser.");
@@ -395,7 +518,6 @@ async function chooseSaveDirectory(){
     return null;
   }
 }
-
 async function filesFromDirectory(handle){
   const out=[];
   for await(const [name,h] of handle.entries()){
@@ -408,7 +530,7 @@ async function filesFromDirectory(handle){
 }
 els.openDirBtn.onclick=async()=>{
   try{
-    if(!window.showDirectoryPicker)throw new Error("Directory picker unavailable; use Load Folder / Files.");
+    if(!window.showDirectoryPicker)throw new Error("Directory picker unavailable; use Import Images / Annotations.");
     directoryHandle=await showDirectoryPicker({mode:"readwrite"});
     labelsDirectoryHandle=directoryHandle;
     setLabelsSourceLabel(directoryHandle.name);
@@ -438,6 +560,18 @@ async function applyLabelsFiles(files,sourceName="separate folder"){
 
   const txtFiles=files.filter(f=>ext(f.name)===".txt"&&f.name.toLowerCase()!=="class_names.txt");
   const txtMap=new Map(txtFiles.map(f=>[stem(f.name),f]));
+  const txtTexts=new Map();
+  const kinds=new Set();
+
+  for(const [s,f] of txtMap){
+    const t=await f.text();
+    txtTexts.set(s,t);
+    const k=annotationKindFromText(t);
+    if(k)kinds.add(k);
+  }
+
+  // A homogeneous external label folder defines the annotation task.
+  if(kinds.size===1)setProjectMode([...kinds][0],{force:true,silent:true});
 
   const classFile=files.find(f=>f.name.toLowerCase()==="class_names.txt");
   if(classFile){
@@ -450,9 +584,9 @@ async function applyLabelsFiles(files,sourceName="separate folder"){
   for(const r of records){
     r.annotations=[];
     r.confidences=[];
-    const tf=txtMap.get(r.stem);
-    if(tf){
-      parseYoloText(await tf.text(),r);
+    const text=txtTexts.get(r.stem);
+    if(text!==undefined){
+      parseYoloText(text,r);
       matched++;
     }
     r.dirty=false;
@@ -460,10 +594,16 @@ async function applyLabelsFiles(files,sourceName="separate folder"){
     r.lastSavedConfidences=r.confidences.slice();
   }
 
-  selected=null;multi.clear();undoStack=[];
+  cancelDraftPolygon(false);
+  selected=null;selectedVertex=null;multi.clear();undoStack=[];mode="select";
   setLabelsSourceLabel(sourceName);
   refreshAll();
-  status(`Loaded labels for ${matched}/${records.length} images from ${sourceName}.`);
+
+  if(kinds.size>1){
+    status(`Loaded labels for ${matched}/${records.length} images from ${sourceName}. Mixed BBOX/segmentation labels found; current ${projectMode==="detect"?"BBOX":"segmentation"} mode was retained.`);
+  }else{
+    status(`Loaded labels for ${matched}/${records.length} images from ${sourceName} · ${projectMode==="detect"?"Detection / BBOX":"Segmentation / Polygon"}.`);
+  }
   return true;
 }
 
@@ -472,6 +612,7 @@ els.labelsFolderBtn.onclick=async()=>{
     status("Load images before selecting a separate labels folder.");
     return;
   }
+
   if(window.showDirectoryPicker){
     try{
       const handle=await showDirectoryPicker({mode:"readwrite"});
@@ -497,15 +638,35 @@ els.labelsFolderInput.onchange=async()=>{
   labelsDirectoryHandle=null;
   const rel=files[0].webkitRelativePath||"";
   const sourceName=rel.includes("/")?rel.split("/")[0]:"selected labels folder";
-  await applyLabelsFiles(files,sourceName);
-  status(`Loaded labels from ${sourceName}. Choose Annotation Save Folder if you want to write changes there.`);
+  const applied=await applyLabelsFiles(files,sourceName);
+  if(applied)status(`Loaded labels from ${sourceName}. Choose Annotation Save Folder if you want to write changes there.`);
   els.labelsFolderInput.value="";
 };
 
+function annotationKindFromText(text){
+  for(const line of text.split(/\r?\n/)){
+    const s=line.trim();if(!s)continue;
+    const p=s.split(/\s+/).map(Number);
+    if(p.some(v=>!Number.isFinite(v)))continue;
+    if(p.length===5)return "detect";
+    if(p.length>=7&&p.length%2===1)return "segment";
+  }
+  return null;
+}
 async function loadFiles(files,fromDirectory=false){
   if(!files.length)return;
   const imageFiles=files.filter(f=>[".png",".jpg",".jpeg"].includes(ext(f.name))).sort((a,b)=>natural(a.name,b.name));
-  const txtMap=new Map(files.filter(f=>ext(f.name)===".txt").map(f=>[stem(f.name),f]));
+  const txtFiles=files.filter(f=>ext(f.name)===".txt"&&f.name.toLowerCase()!=="class_names.txt");
+  const txtMap=new Map(txtFiles.map(f=>[stem(f.name),f]));
+  const txtTexts=new Map();
+  const kinds=new Set();
+
+  for(const [s,f] of txtMap){
+    const t=await f.text();txtTexts.set(s,t);
+    const k=annotationKindFromText(t);if(k)kinds.add(k);
+  }
+  if(kinds.size===1)setProjectMode([...kinds][0],{force:true,silent:true});
+
   const classFile=files.find(f=>f.name.toLowerCase()==="class_names.txt");
   if(classFile){
     const t=await classFile.text();
@@ -517,76 +678,80 @@ async function loadFiles(files,fromDirectory=false){
   for(const file of imageFiles){
     const bm=await createImageBitmap(file);
     const r={file,name:file.name,stem:stem(file.name),bitmap:bm,width:bm.width,height:bm.height,
-      annotations:[],confidences:[],dirty:false,txtHandle:null,
+      annotations:[],confidences:[],dirty:false,
       lastSavedAnnotations:[],lastSavedConfidences:[]};
-    const tf=txtMap.get(r.stem);
-    if(tf)parseYoloText(await tf.text(),r);
-
-    // Baseline used when Auto save on navigation is OFF.
+    const text=txtTexts.get(r.stem);
+    if(text!==undefined)parseYoloText(text,r);
     r.lastSavedAnnotations=r.annotations.map(a=>a.slice());
     r.lastSavedConfidences=r.confidences.slice();
-
-    // Output is handled by the single saveDirectoryHandle selected for this session.
     newRecords.push(r);
   }
   if(!newRecords.length){status("No PNG/JPG/JPEG images found.");return}
-  records=newRecords;current=0;selected=null;multi.clear();undoStack=[];
+
+  records=newRecords;current=0;selected=null;selectedVertex=null;multi.clear();undoStack=[];
   await showRecord(0,false);
-  status(`Loaded ${records.length} images.`);
+  if(kinds.size>1){
+    status(`Loaded ${records.length} images. Mixed BBOX and segmentation .txt files were found; only ${projectMode==="detect"?"BBOX":"segmentation"} lines were imported.`);
+  }else{
+    status(`Loaded ${records.length} images · ${projectMode==="detect"?"Detection / BBOX":"Segmentation / Polygon"}.`);
+  }
 }
 
 function parseYoloText(text,r){
-  r.annotations=[];
+  r.annotations=[];r.confidences=[];
   for(const line of text.split(/\r?\n/)){
     const p=line.trim().split(/\s+/).map(Number);
-    if(p.length<5||p.some(v=>!Number.isFinite(v)))continue;
-    const [cls,xc,yc,w,h]=p;
-    const bw=w*r.width,bh=h*r.height,cx=xc*r.width,cy=yc*r.height;
-    r.annotations.push([Math.trunc(cls),cx-bw/2,cy-bh/2,cx+bw/2,cy+bh/2]);
-    r.confidences.push(null);
+    if(p.some(v=>!Number.isFinite(v)))continue;
+    if(projectMode==="detect"){
+      if(p.length!==5)continue;
+      const [cls,xc,yc,w,h]=p;
+      const bw=w*r.width,bh=h*r.height,cx=xc*r.width,cy=yc*r.height;
+      r.annotations.push([Math.trunc(cls),cx-bw/2,cy-bh/2,cx+bw/2,cy+bh/2]);
+      r.confidences.push(null);
+    }else{
+      if(p.length<7||p.length%2!==1)continue;
+      const a=[Math.trunc(p[0])];
+      for(let i=1;i<p.length;i+=2){
+        a.push(clamp(p[i]*r.width,0,r.width),clamp(p[i+1]*r.height,0,r.height));
+      }
+      if((a.length-1)/2>=3){r.annotations.push(a);r.confidences.push(null)}
+    }
   }
 }
 function yoloText(r){
-  return r.annotations.map(a=>{
-    const [c,x1,y1,x2,y2]=a;
-    const xc=(x1+x2)/2/r.width,yc=(y1+y2)/2/r.height,w=Math.abs(x2-x1)/r.width,h=Math.abs(y2-y1)/r.height;
-    return `${c} ${xc.toFixed(6)} ${yc.toFixed(6)} ${w.toFixed(6)} ${h.toFixed(6)}`;
+  if(projectMode==="detect"){
+    return r.annotations.map(a=>{
+      const [c,x1,y1,x2,y2]=a;
+      const xc=(x1+x2)/2/r.width,yc=(y1+y2)/2/r.height,w=Math.abs(x2-x1)/r.width,h=Math.abs(y2-y1)/r.height;
+      return `${c} ${xc.toFixed(6)} ${yc.toFixed(6)} ${w.toFixed(6)} ${h.toFixed(6)}`;
+    }).join("\n")+(r.annotations.length?"\n":"");
+  }
+  return r.annotations.filter(a=>(a.length-1)/2>=3).map(a=>{
+    const vals=[String(Math.trunc(a[0]))];
+    for(let i=1;i<a.length;i+=2){
+      vals.push((a[i]/r.width).toFixed(6),(a[i+1]/r.height).toFixed(6));
+    }
+    return vals.join(" ");
   }).join("\n")+(r.annotations.length?"\n":"");
 }
 async function saveCurrent(silent=false){
-  const r=rec();
-  if(!r)return false;
-
+  const r=rec();if(!r)return false;
   const text=yoloText(r);
-
   try{
     if(!saveDirectoryHandle){
       const handle=await chooseSaveDirectory();
-      if(!handle){
-        if(!silent)status("Save cancelled: no save folder selected.");
-        return false;
-      }
+      if(!handle){if(!silent)status("Save cancelled: no save folder selected.");return false}
     }
-
-    const fileHandle=await saveDirectoryHandle.getFileHandle(
-      r.stem+".txt",
-      {create:true}
-    );
+    const fileHandle=await saveDirectoryHandle.getFileHandle(r.stem+".txt",{create:true});
     const writable=await fileHandle.createWritable();
-    await writable.write(text);
-    await writable.close();
-
+    await writable.write(text);await writable.close();
     r.dirty=false;
     r.lastSavedAnnotations=r.annotations.map(a=>a.slice());
     r.lastSavedConfidences=r.confidences.slice();
     renderImageList();
-
     if(!silent)status(`Saved ${r.stem}.txt → ${saveDirectoryHandle.name}`);
     return true;
-  }catch(e){
-    status(`Save failed: ${e?.message||e}`);
-    return false;
-  }
+  }catch(e){status(`Save failed: ${e?.message||e}`);return false}
 }
 els.saveBtn.onclick=()=>saveCurrent(false);
 
@@ -598,7 +763,7 @@ async function saveAnnotated(){
   const r=rec();if(!r)return;
   const c=document.createElement("canvas");c.width=r.width;c.height=r.height;
   const x=c.getContext("2d");x.drawImage(r.bitmap,0,0);
-  drawBoxesToContext(x,r,1,0,0,false);
+  drawAnnotationsToContext(x,r,1,0,0,false);
   c.toBlob(b=>downloadBlob(b,r.stem+"_annotated.png"),"image/png");
 }
 els.saveAnnotatedBtn.onclick=saveAnnotated;
@@ -607,41 +772,24 @@ els.viewportPngBtn.onclick=()=>{
 };
 
 function discardUnsavedAnnotations(r){
-  if(!r || !r.dirty)return;
-
+  if(!r||!r.dirty)return;
   r.annotations=(r.lastSavedAnnotations||[]).map(a=>a.slice());
   r.confidences=(r.lastSavedConfidences||[]).slice();
   r.dirty=false;
 }
-
 async function showRecord(idx,doAuto=true){
   if(idx<0||idx>=records.length)return;
-
   const previous=rec();
-
-  if(doAuto && previous?.dirty){
+  if(doAuto&&previous?.dirty){
     if(els.autoSave.checked){
       const saved=await saveCurrent(true);
-      if(!saved){
-        status("Navigation cancelled because the annotation was not saved.");
-        return;
-      }
-    }else{
-      // Browser records stay resident in memory, so explicitly revert them.
-      // This makes "Auto save on navigation" behave like its label implies:
-      // unchecked means unsaved annotation edits do not survive navigation.
-      discardUnsavedAnnotations(previous);
-    }
+      if(!saved){status("Navigation cancelled because the annotation was not saved.");return}
+    }else discardUnsavedAnnotations(previous);
   }
-
-  current=idx;
-  selected=null;
-  multi.clear();
-  undoStack=[];
-  mode="select";
+  cancelDraftPolygon(false);
+  current=idx;selected=null;selectedVertex=null;multi.clear();undoStack=[];mode="select";
   els.addBoxBtn.classList.remove("active");
-  resetView();
-  refreshAll();
+  resetView();refreshAll();
 }
 function next(){if(current+1<records.length)showRecord(current+1)}
 function prev(){if(current>0)showRecord(current-1)}
@@ -665,11 +813,13 @@ function refreshProgress(){
 function pushUndo(){
   const r=rec();if(!r)return;
   undoStack.push({a:r.annotations.map(x=>x.slice()),c:r.confidences.slice()});
-  if(undoStack.length>10)undoStack.shift();
+  if(undoStack.length>20)undoStack.shift();
 }
 function undo(){
   const r=rec();if(!r||!undoStack.length)return;
-  const s=undoStack.pop();r.annotations=s.a;r.confidences=s.c;r.dirty=true;selected=null;multi.clear();refreshAll();
+  cancelDraftPolygon(false);
+  const s=undoStack.pop();r.annotations=s.a;r.confidences=s.c;r.dirty=true;
+  selected=null;selectedVertex=null;multi.clear();refreshAll();
 }
 els.undoBtn.onclick=undo;
 
@@ -681,26 +831,32 @@ function selectedIndices(){
 function deleteSelection(){
   const r=rec();if(!r){status("No image loaded.");return}
   const ids=selectedIndices().sort((a,b)=>b-a);
-  if(!ids.length){status("No box selected to delete.");return}
+  if(!ids.length){status(`No ${objectWord()} selected to delete.`);return}
   pushUndo();
   for(const i of ids){r.annotations.splice(i,1);r.confidences.splice(i,1)}
-  selected=null;multi.clear();markDirty();refreshAll();
+  selected=null;selectedVertex=null;multi.clear();markDirty();refreshAll();
 }
 els.deleteBtn.onclick=deleteSelection;
 els.deleteAllBtn.onclick=()=>{
   const r=rec();if(!r||!r.annotations.length)return;
-  if(!confirm("Delete all annotations in this image?"))return;
-  pushUndo();r.annotations=[];r.confidences=[];selected=null;multi.clear();markDirty();refreshAll();
+  if(!confirm(`Delete all ${objectWord(true)} in this image?`))return;
+  pushUndo();r.annotations=[];r.confidences=[];selected=null;selectedVertex=null;multi.clear();markDirty();refreshAll();
 };
 els.dedupeBtn.onclick=()=>{
   const r=rec();if(!r)return;pushUndo();
   const seen=new Set(),a=[],c=[];
-  r.annotations.forEach((b,i)=>{const k=b.map(v=>Math.round(v*1000)/1000).join(",");if(!seen.has(k)){seen.add(k);a.push(b);c.push(r.confidences[i])}});
-  const n=r.annotations.length-a.length;r.annotations=a;r.confidences=c;markDirty();refreshAll();status(`Removed ${n} duplicate boxes.`);
+  r.annotations.forEach((b,i)=>{
+    const k=b.map(v=>Math.round(v*1000)/1000).join(",");
+    if(!seen.has(k)){seen.add(k);a.push(b);c.push(r.confidences[i])}
+  });
+  const n=r.annotations.length-a.length;r.annotations=a;r.confidences=c;
+  markDirty();refreshAll();status(`Removed ${n} duplicate ${objectWord(true)}.`);
 };
 
 els.copyBtn.onclick=()=>{
-  const r=rec();if(!r)return;clipboard=selectedIndices().map(i=>r.annotations[i].slice());status(`Copied ${clipboard.length} box(es).`);
+  const r=rec();if(!r)return;
+  clipboard=selectedIndices().map(i=>r.annotations[i].slice());
+  status(`Copied ${clipboard.length} ${objectWord(clipboard.length!==1)}.`);
 };
 els.pasteBtn.onclick=()=>{
   const r=rec();if(!r||!clipboard.length)return;pushUndo();
@@ -712,29 +868,100 @@ els.classSelect.onchange=()=>{
   const r=rec();if(!r)return;const ids=selectedIndices();if(!ids.length)return;
   pushUndo();for(const i of ids)r.annotations[i][0]=+els.classSelect.value;markDirty();refreshAll();
 };
-els.addBoxBtn.onclick=()=>{mode=mode==="add"?"select":"add";els.addBoxBtn.classList.toggle("active",mode==="add");status(mode==="add"?"Drag on image to create a box.":"Add-box mode cancelled.")};
+
+function toggleAddMode(){
+  if(!rec())return;
+  if(projectMode==="detect"){
+    mode=mode==="add"?"select":"add";
+    cancelDraftPolygon(false);
+    els.addBoxBtn.classList.toggle("active",mode==="add");
+    status(mode==="add"?"Drag on image to create a box.":"Add-box mode cancelled.");
+  }else{
+    if(mode==="polyAdd"){
+      cancelDraftPolygon(true);status("New-polygon mode cancelled.");
+    }else{
+      mode="polyAdd";draftPolygon=[];draftCursor=null;draftUndoPushed=false;freehandDrawing=false;
+      lastPolyClickTime=0;lastPolyClickCanvas=null;
+      els.addBoxBtn.classList.add("active");
+      status(els.polyDrawMode.value==="drag"
+        ?"New polygon: press and drag around the object; release to finish."
+        :"New polygon: click vertices; double-click or press Enter to finish.");
+      requestDraw();
+    }
+  }
+}
+els.addBoxBtn.onclick=toggleAddMode;
 els.showConf.onchange=()=>{savePrefs();requestDraw()};
 els.autoSave.onchange=savePrefs;
+els.simplifyTol.oninput=()=>{els.simplifyVal.textContent=String(+els.simplifyTol.value);savePrefs()};
+function setPolygonDrawMode(next){
+  if(next!=="click"&&next!=="drag")return;
+  if(mode==="polyAdd"&&draftPolygon.length)cancelDraftPolygon(true);
+  els.polyDrawMode.value=next;
+  lastPolyClickTime=0;
+  lastPolyClickCanvas=null;
+  updatePolygonDrawHint();
+  savePrefs();
+  status(next==="drag" ? "Polygon drawing: Drag / freehand." : "Polygon drawing: Click points.");
+}
+els.polyClickModeBtn.onclick=()=>setPolygonDrawMode("click");
+els.polyDragModeBtn.onclick=()=>setPolygonDrawMode("drag");
 
 async function flipImage(horizontal){
   const r=rec();if(!r)return;pushUndo();
   const c=document.createElement("canvas");c.width=r.width;c.height=r.height;const x=c.getContext("2d");
-  x.save();if(horizontal){x.translate(r.width,0);x.scale(-1,1)}else{x.translate(0,r.height);x.scale(1,-1)}x.drawImage(r.bitmap,0,0);x.restore();
+  x.save();if(horizontal){x.translate(r.width,0);x.scale(-1,1)}else{x.translate(0,r.height);x.scale(1,-1)}
+  x.drawImage(r.bitmap,0,0);x.restore();
   const blob=await new Promise(res=>c.toBlob(res,"image/png"));r.bitmap=await createImageBitmap(blob);
-  r.annotations=r.annotations.map(([cl,x1,y1,x2,y2])=>horizontal
-    ?[cl,r.width-x2,y1,r.width-x1,y2]
-    :[cl,x1,r.height-y2,x2,r.height-y1]);
-  r.dirty=true;selected=null;multi.clear();resetView();refreshAll();
+  if(projectMode==="detect"){
+    r.annotations=r.annotations.map(([cl,x1,y1,x2,y2])=>horizontal
+      ?[cl,r.width-x2,y1,r.width-x1,y2]
+      :[cl,x1,r.height-y2,x2,r.height-y1]);
+  }else{
+    r.annotations=r.annotations.map(a=>{
+      const b=[a[0]];
+      for(let i=1;i<a.length;i+=2)b.push(horizontal?r.width-a[i]:a[i],horizontal?a[i+1]:r.height-a[i+1]);
+      return b;
+    });
+  }
+  r.dirty=true;selected=null;selectedVertex=null;multi.clear();resetView();refreshAll();
 }
 els.flipHBtn.onclick=()=>flipImage(true);els.flipVBtn.onclick=()=>flipImage(false);
+
+function polygonPoints(a){
+  const pts=[];for(let i=1;i<a.length;i+=2)pts.push({x:a[i],y:a[i+1]});return pts;
+}
+function annotationBounds(a){
+  if(projectMode==="detect")return {x1:a[1],y1:a[2],x2:a[3],y2:a[4]};
+  const xs=[],ys=[];for(let i=1;i<a.length;i+=2){xs.push(a[i]);ys.push(a[i+1])}
+  return {x1:Math.min(...xs),y1:Math.min(...ys),x2:Math.max(...xs),y2:Math.max(...ys)};
+}
+function pointSegmentDistance(px,py,ax,ay,bx,by){
+  const vx=bx-ax,vy=by-ay,wx=px-ax,wy=py-ay,den=vx*vx+vy*vy;
+  const t=den?clamp((wx*vx+wy*vy)/den,0,1):0;
+  return Math.hypot(px-(ax+t*vx),py-(ay+t*vy));
+}
+function pointInPolygonPoints(x,y,pts){
+  let inside=false;
+  for(let i=0,j=pts.length-1;i<pts.length;j=i++){
+    const xi=pts[i].x,yi=pts[i].y,xj=pts[j].x,yj=pts[j].y;
+    const intersect=((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi||1e-12)+xi);
+    if(intersect)inside=!inside;
+  }
+  return inside;
+}
+function pointInPolygonAnn(x,y,a){return pointInPolygonPoints(x,y,polygonPoints(a))}
+function polygonAreaPoints(pts){
+  let s=0;for(let i=0,j=pts.length-1;i<pts.length;j=i++)s+=pts[j].x*pts[i].y-pts[i].x*pts[j].y;
+  return s/2;
+}
+function polygonAreaAnn(a){return Math.abs(polygonAreaPoints(polygonPoints(a)))}
 
 function resetView(){
   const r=rec();if(!r){fitScale=1;zoom=1;offsetX=offsetY=0;requestDraw();return}
   const rect=els.stage.getBoundingClientRect();
   fitScale=Math.min(rect.width/r.width,rect.height/r.height);
-  zoom=1;
-  offsetX=(rect.width-r.width*fitScale)/2;
-  offsetY=(rect.height-r.height*fitScale)/2;
+  zoom=1;offsetX=(rect.width-r.width*fitScale)/2;offsetY=(rect.height-r.height*fitScale)/2;
   requestDraw();
 }
 function canvasPoint(ev){
@@ -758,25 +985,41 @@ function requestDraw(){
   if(redrawPending)return;redrawPending=true;requestAnimationFrame(()=>{redrawPending=false;draw()});
 }
 function draw(){
-  const rect=els.stage.getBoundingClientRect();ctx.clearRect(0,0,rect.width,rect.height);ctx.fillStyle="#050608";ctx.fillRect(0,0,rect.width,rect.height);
-  const r=rec();if(!r){ctx.fillStyle="#94a3b8";ctx.font="18px system-ui";ctx.textAlign="center";ctx.fillText("Load images to begin",rect.width/2,rect.height/2);return}
+  const rect=els.stage.getBoundingClientRect();
+  ctx.clearRect(0,0,rect.width,rect.height);ctx.fillStyle="#050608";ctx.fillRect(0,0,rect.width,rect.height);
+  const r=rec();
+  if(!r){ctx.fillStyle="#94a3b8";ctx.font="18px system-ui";ctx.textAlign="center";ctx.fillText("Load images to begin",rect.width/2,rect.height/2);return}
   const s=fitScale*zoom;
   ctx.drawImage(r.bitmap,offsetX,offsetY,r.width*s,r.height*s);
-  drawBoxesToContext(ctx,r,s,offsetX,offsetY,true);
+  drawAnnotationsToContext(ctx,r,s,offsetX,offsetY,true);
+
   if(marquee){
     ctx.save();ctx.strokeStyle="#fff";ctx.setLineDash([7,5]);ctx.lineWidth=1.5;
     ctx.strokeRect(marquee.x,marquee.y,marquee.x2-marquee.x,marquee.y2-marquee.y);ctx.restore();
   }
-  if(mode==="add"&&drag?.type==="new"){
-    ctx.save();ctx.strokeStyle="#22c55e";ctx.lineWidth=2;ctx.strokeRect(drag.sx,drag.sy,drag.cx-drag.sx,drag.cy-drag.sy);ctx.restore();
+  if(projectMode==="detect"&&mode==="add"&&drag?.type==="new"){
+    ctx.save();ctx.strokeStyle="#22c55e";ctx.lineWidth=2;
+    ctx.strokeRect(drag.sx,drag.sy,drag.cx-drag.sx,drag.cy-drag.sy);ctx.restore();
   }
+  if(projectMode==="segment"&&mode==="polyAdd"&&draftPolygon.length){
+    ctx.save();ctx.strokeStyle="#22c55e";ctx.fillStyle="#22c55e";ctx.lineWidth=2;
+    ctx.beginPath();
+    draftPolygon.forEach((p,i)=>{const q=canvasPointFromImage(p.x,p.y);if(i===0)ctx.moveTo(q.x,q.y);else ctx.lineTo(q.x,q.y)});
+    if(draftCursor){const q=canvasPointFromImage(draftCursor.x,draftCursor.y);ctx.lineTo(q.x,q.y)}
+    ctx.stroke();
+    for(const p of draftPolygon){const q=canvasPointFromImage(p.x,p.y);ctx.beginPath();ctx.arc(q.x,q.y,4,0,Math.PI*2);ctx.fill()}
+    ctx.restore();
+  }
+}
+function drawAnnotationsToContext(x,r,s,ox,oy,interactive){
+  if(projectMode==="detect")drawBoxesToContext(x,r,s,ox,oy,interactive);
+  else drawPolygonsToContext(x,r,s,ox,oy,interactive);
 }
 function drawBoxesToContext(x,r,s,ox,oy,interactive){
   x.save();x.font=`${Math.max(12,13*(interactive?1:Math.max(1,r.width/900)))}px system-ui`;x.textBaseline="top";
   r.annotations.forEach((a,i)=>{
     const [cl,x1,y1,x2,y2]=a,color=hex(classColors[cl]||[128,128,128]);
-    const X=ox+x1*s,Y=oy+y1*s,W=(x2-x1)*s,H=(y2-y1)*s;
-    const isSel=i===selected||multi.has(i);
+    const X=ox+x1*s,Y=oy+y1*s,W=(x2-x1)*s,H=(y2-y1)*s,isSel=i===selected||multi.has(i);
     x.strokeStyle=isSel?getComputedStyle(document.documentElement).getPropertyValue("--sel").trim():color;
     x.lineWidth=isSel?3:2;x.strokeRect(X,Y,W,H);
     const name=classNames[cl]??`Class ${cl}`,cf=r.confidences[i];
@@ -789,61 +1032,328 @@ function drawBoxesToContext(x,r,s,ox,oy,interactive){
     }
   });x.restore();
 }
+function drawPolygonsToContext(x,r,s,ox,oy,interactive){
+  x.save();x.font=`${Math.max(12,13*(interactive?1:Math.max(1,r.width/900)))}px system-ui`;x.textBaseline="top";
+  r.annotations.forEach((a,i)=>{
+    const cl=a[0],pts=polygonPoints(a);if(pts.length<3)return;
+    const color=hex(classColors[cl]||[128,128,128]),isSel=i===selected||multi.has(i);
+    x.beginPath();
+    pts.forEach((p,j)=>{const X=ox+p.x*s,Y=oy+p.y*s;if(j===0)x.moveTo(X,Y);else x.lineTo(X,Y)});
+    x.closePath();
+    x.save();x.globalAlpha=.14;x.fillStyle=color;x.fill();x.restore();
+    x.strokeStyle=isSel?getComputedStyle(document.documentElement).getPropertyValue("--sel").trim():color;
+    x.lineWidth=isSel?3:2;x.stroke();
+
+    const p0=pts[0],X=ox+p0.x*s,Y=oy+p0.y*s;
+    const name=classNames[cl]??`Class ${cl}`,cf=r.confidences[i];
+    let lab=`${cl}: ${name}`;if(els.showConf.checked&&cf!==null&&cf!==undefined)lab+=` ${typeof cf==="number"?cf.toFixed(2):cf}`;
+    const tw=x.measureText(lab).width,pad=3,th=16;
+    x.fillStyle="rgba(0,0,0,.70)";x.fillRect(X,Y-th,tw+pad*2,th);x.fillStyle=color;x.fillText(lab,X+pad,Y-th+1);
+
+    if(interactive&&i===selected){
+      pts.forEach((p,j)=>{
+        const qx=ox+p.x*s,qy=oy+p.y*s;
+        x.fillStyle=j===selectedVertex?"#ef4444":"#facc15";
+        x.fillRect(qx-4,qy-4,8,8);
+      });
+    }
+  });x.restore();
+}
 function hitBox(ix,iy){
   const r=rec();if(!r)return null;
   for(let i=r.annotations.length-1;i>=0;i--){const a=r.annotations[i];if(ix>=a[1]&&ix<=a[3]&&iy>=a[2]&&iy<=a[4])return i}
   return null;
 }
+function hitPolygon(ix,iy){
+  const r=rec();if(!r)return null;
+  const tol=8/Math.max(.001,fitScale*zoom);
+  for(let i=r.annotations.length-1;i>=0;i--){
+    const pts=polygonPoints(r.annotations[i]);
+    if(pointInPolygonPoints(ix,iy,pts))return i;
+    for(let j=0;j<pts.length;j++){
+      const a=pts[j],b=pts[(j+1)%pts.length];
+      if(pointSegmentDistance(ix,iy,a.x,a.y,b.x,b.y)<=tol)return i;
+    }
+  }
+  return null;
+}
+function hitAnnotation(ix,iy){return projectMode==="detect"?hitBox(ix,iy):hitPolygon(ix,iy)}
 function hitHandle(cx,cy){
-  if(selected===null)return null;const r=rec(),a=r?.annotations[selected];if(!a)return null;
+  if(projectMode!=="detect"||selected===null)return null;
+  const r=rec(),a=r?.annotations[selected];if(!a)return null;
   const pts={tl:canvasPointFromImage(a[1],a[2]),tr:canvasPointFromImage(a[3],a[2]),bl:canvasPointFromImage(a[1],a[4]),br:canvasPointFromImage(a[3],a[4])};
   for(const [k,p] of Object.entries(pts))if(Math.hypot(cx-p.x,cy-p.y)<10)return k;return null;
+}
+function hitVertex(cx,cy){
+  if(projectMode!=="segment"||selected===null)return null;
+  const a=rec()?.annotations[selected];if(!a)return null;
+  for(let j=0;j<(a.length-1)/2;j++){
+    const p=canvasPointFromImage(a[1+j*2],a[2+j*2]);
+    if(Math.hypot(cx-p.x,cy-p.y)<10)return j;
+  }
+  return null;
 }
 function normalizeBox(a,r){
   let [c,x1,y1,x2,y2]=a;[x1,x2]=[Math.min(x1,x2),Math.max(x1,x2)];[y1,y2]=[Math.min(y1,y2),Math.max(y1,y2)];
   return [c,clamp(x1,0,r.width),clamp(y1,0,r.height),clamp(x2,0,r.width),clamp(y2,0,r.height)];
 }
+function movePolygonInPlace(a,dx,dy,r){
+  for(let i=1;i<a.length;i+=2){a[i]=clamp(a[i]+dx,0,r.width);a[i+1]=clamp(a[i+1]+dy,0,r.height)}
+}
+function cleanDraftPolygonPoints(points){
+  if(!points.length)return [];
+  const minCanvasDistance=2.5;
+  const scale=Math.max(.001,fitScale*zoom);
+  const minImageDistance=minCanvasDistance/scale;
+  const out=[points[0]];
+  for(let i=1;i<points.length;i++){
+    const p=points[i],q=out[out.length-1];
+    if(Math.hypot(p.x-q.x,p.y-q.y)>=minImageDistance)out.push(p);
+  }
+  if(out.length>2){
+    const first=out[0],last=out[out.length-1];
+    if(Math.hypot(first.x-last.x,first.y-last.y)<minImageDistance)out.pop();
+  }
+  return out;
+}
+function finalizeDraftPolygon(){
+  const r=rec();if(projectMode!=="segment"||mode!=="polyAdd"||!r)return;
+  draftPolygon=cleanDraftPolygonPoints(draftPolygon);
+  if(draftPolygon.length<3){
+    status("A polygon needs at least 3 distinct vertices.");
+    if(els.polyDrawMode.value==="drag")cancelDraftPolygon(true);
+    return;
+  }
+  if(!draftUndoPushed)pushUndo();
+  const a=[+els.classSelect.value];
+  for(const p of draftPolygon)a.push(clamp(p.x,0,r.width),clamp(p.y,0,r.height));
+  r.annotations.push(a);r.confidences.push("Manual");
+  selected=r.annotations.length-1;selectedVertex=null;multi.clear();
+  draftPolygon=[];draftCursor=null;draftUndoPushed=false;mode="select";els.addBoxBtn.classList.remove("active");
+  markDirty();refreshAll();status("Polygon added.");
+}
+els.finishPolyBtn.onclick=finalizeDraftPolygon;
+
+function rdpOpen(points,eps){
+  if(points.length<=2)return points.slice();
+  const a=points[0],b=points[points.length-1];
+  let max=-1,idx=-1;
+  for(let i=1;i<points.length-1;i++){
+    const d=pointSegmentDistance(points[i].x,points[i].y,a.x,a.y,b.x,b.y);
+    if(d>max){max=d;idx=i}
+  }
+  if(max>eps&&idx>0){
+    const l=rdpOpen(points.slice(0,idx+1),eps),r=rdpOpen(points.slice(idx),eps);
+    return l.slice(0,-1).concat(r);
+  }
+  return [a,b];
+}
+function simplifyClosedPoints(points,eps){
+  if(points.length<=3||eps<=0)return points.slice();
+  let far=1,best=0;
+  for(let i=1;i<points.length;i++){
+    const d=Math.hypot(points[i].x-points[0].x,points[i].y-points[0].y);
+    if(d>best){best=d;far=i}
+  }
+  const a=rdpOpen(points.slice(0,far+1),eps);
+  const b=rdpOpen(points.slice(far).concat([points[0]]),eps);
+  const out=a.concat(b.slice(1,-1));
+  return out.length>=3?out:points.slice();
+}
+function simplifyIndices(ids){
+  if(projectMode!=="segment")return;
+  const r=rec();if(!r||!ids.length)return;pushUndo();
+  const eps=+els.simplifyTol.value;
+  for(const i of ids){
+    const ann=r.annotations[i],pts=simplifyClosedPoints(polygonPoints(ann),eps),out=[ann[0]];
+    for(const p of pts)out.push(p.x,p.y);r.annotations[i]=out;
+  }
+  selectedVertex=null;markDirty();refreshAll();status(`Simplified ${ids.length} polygon(s) at ${eps}px tolerance.`);
+}
+els.simplifyBtn.onclick=()=>simplifyIndices(selectedIndices());
+els.simplifyAllBtn.onclick=()=>{const r=rec();if(r)simplifyIndices(r.annotations.map((_,i)=>i))};
+
+function addVertex(){
+  if(projectMode!=="segment")return;
+  const r=rec();if(!r||selected===null||selectedVertex===null){status("Select a polygon vertex first.");return}
+  const a=r.annotations[selected],n=(a.length-1)/2;if(n<2)return;
+  const j=selectedVertex,k=(j+1)%n;
+  const x1=a[1+j*2],y1=a[2+j*2],x2=a[1+k*2],y2=a[2+k*2];
+  pushUndo();a.splice(3+j*2,0,(x1+x2)/2,(y1+y2)/2);selectedVertex=j+1;markDirty();refreshAll();
+}
+function deleteVertex(){
+  if(projectMode!=="segment")return;
+  const r=rec();if(!r||selected===null||selectedVertex===null){status("Select a polygon vertex first.");return}
+  const a=r.annotations[selected],n=(a.length-1)/2;
+  if(n<=3){status("A polygon must keep at least 3 vertices.");return}
+  pushUndo();a.splice(1+selectedVertex*2,2);selectedVertex=Math.min(selectedVertex,n-2);markDirty();refreshAll();
+}
+els.addVertexBtn.onclick=addVertex;els.deleteVertexBtn.onclick=deleteVertex;
+
+function convexHull(points){
+  const pts=points.map(p=>({x:p.x,y:p.y})).sort((a,b)=>a.x-b.x||a.y-b.y);
+  if(pts.length<=2)return pts;
+  const cross=(o,a,b)=>(a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x);
+  const lo=[];for(const p of pts){while(lo.length>=2&&cross(lo[lo.length-2],lo[lo.length-1],p)<=0)lo.pop();lo.push(p)}
+  const hi=[];for(let i=pts.length-1;i>=0;i--){const p=pts[i];while(hi.length>=2&&cross(hi[hi.length-2],hi[hi.length-1],p)<=0)hi.pop();hi.push(p)}
+  lo.pop();hi.pop();return lo.concat(hi);
+}
+function mergeSelectedPolygons(){
+  if(projectMode!=="segment")return;
+  const r=rec(),ids=selectedIndices().sort((a,b)=>a-b);
+  if(!r||ids.length<2){status("Select at least two polygons to merge.");return}
+  const cls=r.annotations[ids[0]][0],pts=[];
+  for(const i of ids)pts.push(...polygonPoints(r.annotations[i]));
+  const hull=convexHull(pts);if(hull.length<3)return;
+  pushUndo();
+  const ann=[cls];for(const p of hull)ann.push(p.x,p.y);
+  for(const i of [...ids].sort((a,b)=>b-a)){r.annotations.splice(i,1);r.confidences.splice(i,1)}
+  r.annotations.push(ann);r.confidences.push("Manual");selected=r.annotations.length-1;selectedVertex=null;multi.clear();
+  markDirty();refreshAll();status("Selected polygons merged using their outer convex hull.");
+}
+els.mergeBtn.onclick=mergeSelectedPolygons;
+
+function pointOnPolygonEdge(p,outer,tol=.75){
+  const pts=polygonPoints(outer);
+  for(let i=0;i<pts.length;i++)if(pointSegmentDistance(p.x,p.y,pts[i].x,pts[i].y,pts[(i+1)%pts.length].x,pts[(i+1)%pts.length].y)<=tol)return true;
+  return false;
+}
+function deleteContainedPolygons(showStatus=true){
+  if(projectMode!=="segment")return 0;
+  const r=rec();if(!r)return 0;
+  const del=new Set();
+  for(let i=0;i<r.annotations.length;i++){
+    if(del.has(i))continue;
+    const outer=r.annotations[i],areaO=polygonAreaAnn(outer);
+    for(let j=0;j<r.annotations.length;j++){
+      if(i===j||del.has(j))continue;
+      const inner=r.annotations[j],areaI=polygonAreaAnn(inner);
+      if(areaO<=areaI)continue;
+      const pts=polygonPoints(inner);
+      if(pts.every(p=>pointInPolygonAnn(p.x,p.y,outer)||pointOnPolygonEdge(p,outer)))del.add(j);
+    }
+  }
+  if(!del.size){if(showStatus)status("No contained polygons found.");return 0}
+  pushUndo();
+  for(const i of [...del].sort((a,b)=>b-a)){r.annotations.splice(i,1);r.confidences.splice(i,1)}
+  selected=null;selectedVertex=null;multi.clear();markDirty();refreshAll();
+  if(showStatus)status(`Deleted ${del.size} contained polygon(s).`);
+  return del.size;
+}
+els.containedBtn.onclick=()=>deleteContainedPolygons(true);
 
 els.canvas.onpointerdown=async ev=>{
   els.canvas.focus({preventScroll:true});
-  if(!rec())return;
+  const r=rec();if(!r)return;
   hideContext();els.canvas.setPointerCapture(ev.pointerId);
   const p=canvasPoint(ev),ip=imagePointFromCanvas(p.x,p.y);
   if(ev.button===1){pan={x:p.x,y:p.y,ox:offsetX,oy:offsetY};return}
   if(ev.button!==0)return;
   if(ev.altKey){await singleClickPrediction(ip.x,ip.y);return}
 
-  if(mode==="add"){pushUndo();drag={type:"new",sx:p.x,sy:p.y,cx:p.x,cy:p.y,startImg:ip};return}
+  if(projectMode==="segment"&&mode==="polyAdd"){
+    if(!draftUndoPushed){pushUndo();draftUndoPushed=true}
+    const q={x:clamp(ip.x,0,r.width),y:clamp(ip.y,0,r.height)};
+    if(els.polyDrawMode.value==="drag"){
+      freehandDrawing=true;
+      draftPolygon=[q];
+      draftCursor=q;
+      drag={type:"polyFreehand",lastCanvas:p,last:q};
+      lastPolyClickTime=0;
+      lastPolyClickCanvas=null;
+    }else{
+      const now=performance.now();
+      const isSecondClick=
+        lastPolyClickCanvas!==null &&
+        (now-lastPolyClickTime)<=POLY_DOUBLE_CLICK_MS &&
+        Math.hypot(p.x-lastPolyClickCanvas.x,p.y-lastPolyClickCanvas.y)<=POLY_DOUBLE_CLICK_PX;
 
-  const handle=hitHandle(p.x,p.y);
-  if(handle&&selected!==null){pushUndo();drag={type:"resize",handle,last:ip};return}
+      if(isSecondClick && draftPolygon.length>=3){
+        lastPolyClickTime=0;
+        lastPolyClickCanvas=null;
+        finalizeDraftPolygon();
+        return;
+      }
 
-  const hit=hitBox(ip.x,ip.y);
+      draftPolygon.push(q);
+      draftCursor=q;
+      lastPolyClickTime=now;
+      lastPolyClickCanvas={x:p.x,y:p.y};
+    }
+    requestDraw();return;
+  }
+  if(projectMode==="detect"&&mode==="add"){
+    pushUndo();drag={type:"new",sx:p.x,sy:p.y,cx:p.x,cy:p.y,startImg:ip};return;
+  }
+
+  if(projectMode==="detect"){
+    const handle=hitHandle(p.x,p.y);
+    if(handle&&selected!==null){pushUndo();drag={type:"resize",handle,last:ip};return}
+  }else{
+    const vertex=hitVertex(p.x,p.y);
+    if(vertex!==null&&selected!==null){
+      selectedVertex=vertex;pushUndo();drag={type:"vertex",last:ip};requestDraw();renderBoxList();return;
+    }
+  }
+
+  const hit=hitAnnotation(ip.x,ip.y);
   if(ev.ctrlKey||ev.metaKey){
-    if(hit!==null){if(multi.has(hit))multi.delete(hit);else multi.add(hit);selected=null;requestDraw();renderBoxList();return}
+    if(hit!==null){
+      if(multi.has(hit))multi.delete(hit);else multi.add(hit);
+      selected=null;selectedVertex=null;requestDraw();renderBoxList();return;
+    }
   }
   if(hit!==null){
     if(!multi.has(hit)){selected=hit;if(!ev.shiftKey)multi.clear()}
-    pushUndo();drag={type:multi.size&&multi.has(hit)?"multiMove":"move",last:ip};requestDraw();renderBoxList();return;
+    selectedVertex=null;pushUndo();
+    drag={type:multi.size&&multi.has(hit)?"multiMove":"move",last:ip};
+    requestDraw();renderBoxList();return;
   }
-  selected=null;if(!ev.shiftKey)multi.clear();marquee={x:p.x,y:p.y,x2:p.x,y2:p.y,startImg:ip};requestDraw();renderBoxList();
+
+  selected=null;selectedVertex=null;if(!ev.shiftKey)multi.clear();
+  marquee={x:p.x,y:p.y,x2:p.x,y2:p.y};requestDraw();renderBoxList();
 };
 els.canvas.onpointermove=ev=>{
-  const r=rec();if(!r)return;const p=canvasPoint(ev),ip=imagePointFromCanvas(p.x,p.y);
+  const r=rec();if(!r)return;
+  const p=canvasPoint(ev),ip=imagePointFromCanvas(p.x,p.y);
+  if(projectMode==="segment"&&mode==="polyAdd"){
+    draftCursor=ip;
+    if(freehandDrawing&&drag?.type==="polyFreehand"){
+      const last=drag.lastCanvas;
+      if(!last||Math.hypot(p.x-last.x,p.y-last.y)>=3){
+        draftPolygon.push({x:clamp(ip.x,0,r.width),y:clamp(ip.y,0,r.height)});
+        drag.lastCanvas=p;
+        drag.last=ip;
+      }
+    }
+    requestDraw();
+  }
   if(pan){offsetX=pan.ox+(p.x-pan.x);offsetY=pan.oy+(p.y-pan.y);requestDraw();return}
   if(marquee){marquee.x2=p.x;marquee.y2=p.y;requestDraw();return}
   if(!drag)return;
+  if(drag.type==="polyFreehand")return;
   if(drag.type==="new"){drag.cx=p.x;drag.cy=p.y;requestDraw();return}
   const dx=ip.x-drag.last.x,dy=ip.y-drag.last.y;
-  if(drag.type==="move"&&selected!==null){
-    const a=r.annotations[selected];a[1]+=dx;a[2]+=dy;a[3]+=dx;a[4]+=dy;r.annotations[selected]=normalizeBox(a,r);
-  }else if(drag.type==="multiMove"){
-    for(const i of multi){const a=r.annotations[i];a[1]+=dx;a[2]+=dy;a[3]+=dx;a[4]+=dy;r.annotations[i]=normalizeBox(a,r)}
-  }else if(drag.type==="resize"&&selected!==null){
-    const a=r.annotations[selected];
-    if(drag.handle==="tl"){a[1]+=dx;a[2]+=dy}if(drag.handle==="tr"){a[3]+=dx;a[2]+=dy}
-    if(drag.handle==="bl"){a[1]+=dx;a[4]+=dy}if(drag.handle==="br"){a[3]+=dx;a[4]+=dy}
-    r.annotations[selected]=a;
+
+  if(projectMode==="detect"){
+    if(drag.type==="move"&&selected!==null){
+      const a=r.annotations[selected];a[1]+=dx;a[2]+=dy;a[3]+=dx;a[4]+=dy;r.annotations[selected]=normalizeBox(a,r);
+    }else if(drag.type==="multiMove"){
+      for(const i of multi){const a=r.annotations[i];a[1]+=dx;a[2]+=dy;a[3]+=dx;a[4]+=dy;r.annotations[i]=normalizeBox(a,r)}
+    }else if(drag.type==="resize"&&selected!==null){
+      const a=r.annotations[selected];
+      if(drag.handle==="tl"){a[1]+=dx;a[2]+=dy}if(drag.handle==="tr"){a[3]+=dx;a[2]+=dy}
+      if(drag.handle==="bl"){a[1]+=dx;a[4]+=dy}if(drag.handle==="br"){a[3]+=dx;a[4]+=dy}
+      r.annotations[selected]=a;
+    }
+  }else{
+    if(drag.type==="vertex"&&selected!==null&&selectedVertex!==null){
+      const a=r.annotations[selected];a[1+selectedVertex*2]=clamp(ip.x,0,r.width);a[2+selectedVertex*2]=clamp(ip.y,0,r.height);
+    }else if(drag.type==="move"&&selected!==null){
+      movePolygonInPlace(r.annotations[selected],dx,dy,r);
+    }else if(drag.type==="multiMove"){
+      for(const i of multi)movePolygonInPlace(r.annotations[i],dx,dy,r);
+    }
   }
   drag.last=ip;markDirty();requestDraw();renderBoxList();
 };
@@ -854,23 +1364,43 @@ els.canvas.onpointerup=ev=>{
     const p=canvasPoint(ev),a=imagePointFromCanvas(marquee.x,marquee.y),b=imagePointFromCanvas(p.x,p.y);
     if(Math.abs(p.x-marquee.x)>4||Math.abs(p.y-marquee.y)>4){
       const x1=Math.min(a.x,b.x),x2=Math.max(a.x,b.x),y1=Math.min(a.y,b.y),y2=Math.max(a.y,b.y);
-      multi.clear();r.annotations.forEach((q,i)=>{if(q[1]>=x1&&q[2]>=y1&&q[3]<=x2&&q[4]<=y2)multi.add(i)});
+      multi.clear();
+      r.annotations.forEach((q,i)=>{
+        const z=annotationBounds(q);if(z.x1>=x1&&z.y1>=y1&&z.x2<=x2&&z.y2<=y2)multi.add(i);
+      });
     }
-    marquee=null;requestDraw();renderBoxList();return
+    marquee=null;requestDraw();renderBoxList();return;
+  }
+  if(projectMode==="segment"&&freehandDrawing&&drag?.type==="polyFreehand"){
+    freehandDrawing=false;
+    drag=null;
+    finalizeDraftPolygon();
+    return;
   }
   if(!drag)return;
-  if(drag.type==="new"){
+  if(projectMode==="detect"&&drag.type==="new"){
     const p=canvasPoint(ev),a=drag.startImg,b=imagePointFromCanvas(p.x,p.y);
-    let box=normalizeBox([+els.classSelect.value,a.x,a.y,b.x,b.y],r);
-    if(box[3]-box[1]>5&&box[4]-box[2]>5){r.annotations.push(box);r.confidences.push("Manual");selected=r.annotations.length-1;markDirty()}
-    else undoStack.pop();
+    const box=normalizeBox([+els.classSelect.value,a.x,a.y,b.x,b.y],r);
+    if(box[3]-box[1]>5&&box[4]-box[2]>5){
+      r.annotations.push(box);r.confidences.push("Manual");selected=r.annotations.length-1;markDirty();
+    }else undoStack.pop();
     mode="select";els.addBoxBtn.classList.remove("active");
-  }else if(selected!==null){r.annotations[selected]=normalizeBox(r.annotations[selected],r);markDirty()}
+  }else if(projectMode==="detect"&&selected!==null&&drag.type==="resize"){
+    r.annotations[selected]=normalizeBox(r.annotations[selected],r);markDirty();
+  }
   drag=null;refreshAll();
 };
+els.canvas.ondblclick=ev=>{
+  if(projectMode!=="segment"||mode!=="polyAdd"||els.polyDrawMode.value!=="click")return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  if(draftPolygon.length>=3)finalizeDraftPolygon();
+};
+
 els.canvas.onwheel=ev=>{
-  if(!rec())return;ev.preventDefault();const p=canvasPoint(ev),before=imagePointFromCanvas(p.x,p.y);
-  const factor=ev.deltaY<0?1.1:0.9;zoom=clamp(zoom*factor,1,12);const s=fitScale*zoom;
+  if(!rec())return;ev.preventDefault();
+  const p=canvasPoint(ev),before=imagePointFromCanvas(p.x,p.y),factor=ev.deltaY<0?1.1:0.9;
+  zoom=clamp(zoom*factor,1,12);const s=fitScale*zoom;
   offsetX=p.x-before.x*s;offsetY=p.y-before.y*s;requestDraw();
 };
 els.canvas.oncontextmenu=ev=>{ev.preventDefault();showContext(ev.clientX,ev.clientY)};
@@ -879,8 +1409,21 @@ function showContext(x,y){
   const has=selectedIndices().length>0;
   els.contextMenu.innerHTML="";
   const add=(label,fn)=>{const b=document.createElement("button");b.textContent=label;b.onclick=()=>{hideContext();fn()};els.contextMenu.appendChild(b)};
-  if(has){add("Delete box(es)",deleteSelection);add("Copy box(es)",()=>els.copyBtn.click());classNames.slice(0,12).forEach((n,i)=>add(`Class ${i}: ${n}`,()=>{els.classSelect.value=i;els.classSelect.dispatchEvent(new Event("change"))}))}
-  else{add("Undo",undo);add("Save annotation",()=>saveCurrent());add("Paste box(es)",()=>els.pasteBtn.click());add("New box",()=>els.addBoxBtn.click())}
+  if(has){
+    add(`Delete ${objectWord(true)}`,deleteSelection);
+    add(`Copy ${objectWord(true)}`,()=>els.copyBtn.click());
+    if(projectMode==="segment"){
+      add("Simplify selected",()=>els.simplifyBtn.click());
+      if(selectedIndices().length>=2)add("Merge selected",mergeSelectedPolygons);
+      if(selected!==null&&selectedVertex!==null){
+        add("Add vertex after selected",addVertex);add("Delete selected vertex",deleteVertex);
+      }
+    }
+    classNames.slice(0,12).forEach((n,i)=>add(`Class ${i}: ${n}`,()=>{els.classSelect.value=i;els.classSelect.dispatchEvent(new Event("change"))}));
+  }else{
+    add("Undo",undo);add("Save annotation",()=>saveCurrent());add(`Paste ${objectWord(true)}`,()=>els.pasteBtn.click());
+    add(`New ${objectWord()}`,()=>els.addBoxBtn.click());
+  }
   els.contextMenu.style.left=x+"px";els.contextMenu.style.top=y+"px";els.contextMenu.style.display="block";
 }
 function hideContext(){els.contextMenu.style.display="none"}
@@ -891,8 +1434,11 @@ function renderBoxList(){
   r.annotations.forEach((a,i)=>{
     const d=document.createElement("div");d.className="item"+(i===selected||multi.has(i)?" selected":"");
     const dot=document.createElement("span");dot.className="dot";dot.style.background=hex(classColors[a[0]]||[128,128,128]);
-    const t=document.createElement("span");t.className="ellipsis grow";t.textContent=`Box ${i} · ${classNames[a[0]]??"Class "+a[0]}`;
-    d.append(dot,t);d.onclick=()=>{selected=i;multi.clear();els.classSelect.value=a[0];requestDraw();renderBoxList()};els.boxList.appendChild(d);
+    const t=document.createElement("span");t.className="ellipsis grow";
+    t.textContent=`${projectMode==="detect"?"Box":"Polygon"} ${i} · ${classNames[a[0]]??"Class "+a[0]}`;
+    d.append(dot,t);
+    d.onclick=()=>{selected=i;selectedVertex=null;multi.clear();els.classSelect.value=a[0];requestDraw();renderBoxList()};
+    els.boxList.appendChild(d);
   });
 }
 function refreshAll(){renderImageList();refreshProgress();renderBoxList();requestDraw()}
@@ -900,24 +1446,30 @@ els.helpBtn.onclick=()=>els.helpDialog.showModal();
 els.closeHelpBtn.onclick=()=>els.helpDialog.close();
 
 function isTypingControl(el){
-  if(!el)return false;
-  if(el.isContentEditable)return true;
-  if(el.tagName==="TEXTAREA")return true;
+  if(!el)return false;if(el.isContentEditable)return true;if(el.tagName==="TEXTAREA")return true;
   if(el.tagName!=="INPUT")return false;
   const t=(el.type||"text").toLowerCase();
   return ["text","number","search","email","url","password","tel"].includes(t);
 }
-
 window.addEventListener("keydown",ev=>{
   const k=ev.key.toLowerCase();
-
-  // Delete annotations even if a button, file picker, checkbox, range slider,
-  // or select still owns focus. Only protect real text/number editing fields.
   if(isTypingControl(document.activeElement))return;
-  if((ev.ctrlKey||ev.metaKey)&&k==="a"){ev.preventDefault();const r=rec();if(r){selected=null;multi=new Set(r.annotations.map((_,i)=>i));requestDraw();renderBoxList()}return}
+  if((ev.ctrlKey||ev.metaKey)&&k==="a"){
+    ev.preventDefault();const r=rec();if(r){selected=null;selectedVertex=null;multi=new Set(r.annotations.map((_,i)=>i));requestDraw();renderBoxList()}return;
+  }
   if((ev.ctrlKey||ev.metaKey)&&k==="c"){ev.preventDefault();els.copyBtn.click();return}
   if((ev.ctrlKey||ev.metaKey)&&k==="v"){ev.preventDefault();els.pasteBtn.click();return}
-  if(k==="delete"||k==="backspace"){ev.preventDefault();deleteSelection();return}
+  if(k==="delete"){ev.preventDefault();deleteSelection();return}
+  if(k==="backspace"){
+    ev.preventDefault();
+    if(projectMode==="segment"&&selected!==null&&selectedVertex!==null)deleteVertex();else deleteSelection();
+    return;
+  }
+  if(k==="escape"&&projectMode==="segment"&&mode==="polyAdd"){cancelDraftPolygon(true);status("New polygon cancelled.");return}
+  if(k==="enter"&&projectMode==="segment"&&mode==="polyAdd"&&els.polyDrawMode.value==="click"){
+    ev.preventDefault();finalizeDraftPolygon();return
+  }
+  if((k==="insert"||k==="i")&&projectMode==="segment"){ev.preventDefault();addVertex();return}
   if(k==="n"){els.addBoxBtn.click();return}
   if(k==="s"){saveCurrent();return}
   if(k==="y"){runYolo(false);return}
@@ -1020,8 +1572,7 @@ async function loadCurrentModel(){
   if(!currentModelFile){
     currentModel=null;
     els.backendStat.textContent="—";
-    setSaveDirectory(null);
-setModelState("idle","Select one .tflite file.");
+    setModelState("idle","Select one .tflite file.");
     return null;
   }
 
@@ -1046,7 +1597,7 @@ setModelState("idle","Select one .tflite file.");
 
     setModelState(
       "ready",
-      `${currentModelFile.name} · LiteRT.js · backend: ${model.device||"unknown"}`
+      `${currentModelFile.name} · LiteRT.js · ${model.task?`task: ${model.task} · `:""}backend: ${model.device||"unknown"}`
     );
     status(`Model READY: ${currentModelFile.name} (${model.device||"unknown"}).`);
     return model;
@@ -1112,109 +1663,193 @@ els.iou.oninput=()=>{
   savePrefs();
 };
 
-async function inferDetections(conf=+els.conf.value,iou=+els.iou.value){
+async function inferResults(conf=+els.conf.value,iou=+els.iou.value){
   const r=rec();
   if(!r)throw new Error("No image loaded.");
   if(!currentModelFile)throw new Error("No .tflite model selected.");
 
-  if(modelLoadState!=="ready" || !currentModel){
+  if(modelLoadState!=="ready"||!currentModel){
     const model=await loadCurrentModel();
     if(!model)throw new Error("LiteRT model is not ready.");
   }
   const model=currentModel;
-
   const wallStart=performance.now();
   let results;
-
   try{
-    // ImageBitmap is explicitly supported by the official browser API.
     results=await model.predict(r.bitmap,{conf,iou});
   }catch(e){
     throw new Error(`model.predict() failed: ${e?.message||e}`);
   }
 
-  const wall=performance.now()-wallStart;
-  const sp=results?.speed||{};
-
-  els.preTime.textContent=Number.isFinite(Number(sp.preprocess))
-    ? `${Number(sp.preprocess).toFixed(1)} ms`
-    : "—";
-  els.inferTime.textContent=Number.isFinite(Number(sp.inference))
-    ? `${Number(sp.inference).toFixed(1)} ms`
-    : `${wall.toFixed(1)} ms wall`;
-  els.postTime.textContent=Number.isFinite(Number(sp.postprocess))
-    ? `${Number(sp.postprocess).toFixed(1)} ms`
-    : "—";
+  const wall=performance.now()-wallStart,sp=results?.speed||{};
+  els.preTime.textContent=Number.isFinite(Number(sp.preprocess))?`${Number(sp.preprocess).toFixed(1)} ms`:"—";
+  els.inferTime.textContent=Number.isFinite(Number(sp.inference))?`${Number(sp.inference).toFixed(1)} ms`:`${wall.toFixed(1)} ms wall`;
+  els.postTime.textContent=Number.isFinite(Number(sp.postprocess))?`${Number(sp.postprocess).toFixed(1)} ms`:"—";
   els.backendStat.textContent=model.device||"unknown";
 
-  const boxes=Array.isArray(results?.boxes) ? results.boxes : [];
-
-  // If model.names was not exposed on the loaded model object, recover names
-  // from the detection results as they arrive.
+  const boxes=Array.isArray(results?.boxes)?results.boxes:[];
   if(boxes.length){
     let changed=false;
     for(const b of boxes){
       const cls=Number(b.cls);
       if(Number.isInteger(cls)&&b.name){
         while(classNames.length<=cls)classNames.push(`Class ${classNames.length}`);
-        if(classNames[cls]!==String(b.name)){
-          classNames[cls]=String(b.name);
-          changed=true;
-        }
+        if(classNames[cls]!==String(b.name)){classNames[cls]=String(b.name);changed=true}
       }
     }
-    if(changed){
-      regenColors();
-      updateClassUI();
-      savePrefs();
-    }
+    if(changed){regenColors();updateClassUI();savePrefs()}
   }
 
+  const task=String(results?.task||model?.task||"unknown");
   els.modelStatus.textContent=
-    `${currentModelFile.name} · LiteRT.js · ${model.device||"unknown"} · ${boxes.length} detections`;
+    `${currentModelFile.name} · LiteRT.js · ${model.device||"unknown"} · task: ${task} · ${boxes.length} object(s)`;
+  return results;
+}
 
+function detectionEntriesFromResults(results){
+  const boxes=Array.isArray(results?.boxes)?results.boxes:[];
   return boxes.map(b=>({
-    x1:Number(b.x1),y1:Number(b.y1),x2:Number(b.x2),y2:Number(b.y2),
-    score:Number(b.conf),cls:Number(b.cls),name:b.name
-  })).filter(b=>
-    [b.x1,b.y1,b.x2,b.y2,b.score,b.cls].every(Number.isFinite)
-  );
+    ann:[Number(b.cls),Number(b.x1),Number(b.y1),Number(b.x2),Number(b.y2)],
+    score:Number(b.conf),name:b.name
+  })).filter(o=>o.ann.every(Number.isFinite)&&Number.isFinite(o.score));
+}
+
+function parseResultColor(color,fallback){
+  if(Array.isArray(color)&&color.length>=3)return color.slice(0,3).map(Number);
+  if(color&&typeof color==="object"&&["r","g","b"].every(k=>Number.isFinite(Number(color[k]))))
+    return [Number(color.r),Number(color.g),Number(color.b)];
+  if(typeof color==="string"){
+    const m=color.match(/^#?([0-9a-f]{6})$/i);
+    if(m)return [parseInt(m[1].slice(0,2),16),parseInt(m[1].slice(2,4),16),parseInt(m[1].slice(4,6),16)];
+  }
+  return fallback||null;
+}
+function largestMaskComponent(mask,lw,lh){
+  const seen=new Uint8Array(mask.length);
+  let best=[];
+  const stack=[];
+  for(let start=0;start<mask.length;start++){
+    if(!mask[start]||seen[start])continue;
+    const comp=[];stack.push(start);seen[start]=1;
+    while(stack.length){
+      const q=stack.pop();comp.push(q);const x=q%lw,y=(q/lw)|0;
+      if(x>0){const n=q-1;if(mask[n]&&!seen[n]){seen[n]=1;stack.push(n)}}
+      if(x+1<lw){const n=q+1;if(mask[n]&&!seen[n]){seen[n]=1;stack.push(n)}}
+      if(y>0){const n=q-lw;if(mask[n]&&!seen[n]){seen[n]=1;stack.push(n)}}
+      if(y+1<lh){const n=q+lw;if(mask[n]&&!seen[n]){seen[n]=1;stack.push(n)}}
+    }
+    if(comp.length>best.length)best=comp;
+  }
+  return best;
+}
+function componentBoundaryLoop(component,lw,lh,offX,offY,globalW){
+  if(!component.length)return [];
+  const set=new Set(component),edges=[];
+  const stride=globalW+1;
+  const key=(x,y)=>y*stride+x;
+  const add=(sx,sy,ex,ey)=>edges.push({s:key(sx,sy),e:key(ex,ey)});
+  for(const q of component){
+    const x=q%lw,y=(q/lw)|0,gx=offX+x,gy=offY+y;
+    const up=y>0&&set.has(q-lw),right=x+1<lw&&set.has(q+1),down=y+1<lh&&set.has(q+lw),left=x>0&&set.has(q-1);
+    if(!up)add(gx,gy,gx+1,gy);
+    if(!right)add(gx+1,gy,gx+1,gy+1);
+    if(!down)add(gx+1,gy+1,gx,gy+1);
+    if(!left)add(gx,gy+1,gx,gy);
+  }
+  const byStart=new Map();
+  edges.forEach((e,i)=>{if(!byStart.has(e.s))byStart.set(e.s,[]);byStart.get(e.s).push(i)});
+  const used=new Uint8Array(edges.length),loops=[];
+  const decode=k=>{const y=Math.floor(k/stride);return {x:k-y*stride,y}};
+  for(let seed=0;seed<edges.length;seed++){
+    if(used[seed])continue;
+    const loop=[];let ei=seed,start=edges[seed].s,guard=0;
+    while(ei!==undefined&&!used[ei]&&guard++<edges.length+5){
+      used[ei]=1;const e=edges[ei];loop.push(decode(e.s));
+      if(e.e===start)break;
+      const candidates=byStart.get(e.e)||[];
+      ei=candidates.find(j=>!used[j]);
+    }
+    if(loop.length>=3)loops.push(loop);
+  }
+  loops.sort((a,b)=>Math.abs(polygonAreaPoints(b))-Math.abs(polygonAreaPoints(a)));
+  return loops[0]||[];
+}
+function extractPolygonForBox(maskRGBA,mw,mh,b,color){
+  const sx=mw/Math.max(1,Number(b._resultWidth)||mw),sy=mh/Math.max(1,Number(b._resultHeight)||mh);
+  let x1=clamp(Math.floor(Number(b.x1)*sx)-2,0,mw-1),x2=clamp(Math.ceil(Number(b.x2)*sx)+2,0,mw-1);
+  let y1=clamp(Math.floor(Number(b.y1)*sy)-2,0,mh-1),y2=clamp(Math.ceil(Number(b.y2)*sy)+2,0,mh-1);
+  const lw=Math.max(1,x2-x1+1),lh=Math.max(1,y2-y1+1);
+  const build=(useColor)=>{
+    const bin=new Uint8Array(lw*lh);
+    for(let ly=0;ly<lh;ly++){
+      let gi=((y1+ly)*mw+x1)*4;
+      for(let lx=0;lx<lw;lx++,gi+=4){
+        const a=maskRGBA[gi+3];if(!a)continue;
+        if(useColor&&color){
+          const d=Math.abs(maskRGBA[gi]-color[0])+Math.abs(maskRGBA[gi+1]-color[1])+Math.abs(maskRGBA[gi+2]-color[2]);
+          if(d>72)continue;
+        }
+        bin[ly*lw+lx]=1;
+      }
+    }
+    return bin;
+  };
+  let comp=largestMaskComponent(build(true),lw,lh);
+  if(comp.length<6)comp=largestMaskComponent(build(false),lw,lh);
+  return componentBoundaryLoop(comp,lw,lh,x1,y1,mw);
+}
+async function segmentationEntriesFromResults(results,r){
+  const boxes=Array.isArray(results?.boxes)?results.boxes:[];
+  const masks=results?.masks;
+  if(!masks||!Number.isFinite(Number(masks.length)))throw new Error("The model returned no instance mask overlay. Load a YOLO segmentation model.");
+
+  let mw=Number(results.width)||r.width,mh=Number(results.height)||r.height;
+  const rgba=(masks instanceof Uint8Array)?masks:new Uint8Array(masks.buffer||masks);
+  if(rgba.length!==mw*mh*4){
+    if(rgba.length===r.width*r.height*4){mw=r.width;mh=r.height}
+    else throw new Error(`Unexpected mask buffer size: ${rgba.length} bytes for ${mw}×${mh}.`);
+  }
+
+  const out=[],tol=Math.max(1,+els.simplifyTol.value);
+  for(let i=0;i<boxes.length;i++){
+    const b=boxes[i];
+    b._resultWidth=Number(results.width)||mw;b._resultHeight=Number(results.height)||mh;
+    const fallback=classColors[Number(b.cls)]||null,color=parseResultColor(b.color,fallback);
+    let pts=extractPolygonForBox(rgba,mw,mh,b,color);
+    if(pts.length<3)continue;
+    pts=simplifyClosedPoints(pts,tol);
+    const rx=r.width/mw,ry=r.height/mh,ann=[Number(b.cls)];
+    for(const p of pts)ann.push(clamp(p.x*rx,0,r.width),clamp(p.y*ry,0,r.height));
+    if((ann.length-1)/2>=3)out.push({ann,score:Number(b.conf),name:b.name});
+    if(i%5===4){els.loadText.textContent=`Extracting polygon ${i+1}/${boxes.length}`;await new Promise(requestAnimationFrame)}
+  }
+  if(!out.length)throw new Error("Segmentation masks were returned, but no editable polygon contours could be extracted.");
+  return out;
 }
 
 async function runYolo(append=false){
   const r=rec();
-  if(!r){
-    status("Load an image before running YOLO.");
-    return;
-  }
-  if(!currentModelFile){
-    status("Select a .tflite model first.");
-    return;
-  }
+  if(!r){status("Load an image before running YOLO.");return}
+  if(!currentModelFile){status("Select a .tflite model first.");return}
 
   try{
-    showLoading("Running LiteRT YOLO inference…",currentModelFile.name);
-    const boxes=await inferDetections();
+    showLoading(projectMode==="detect"?"Running LiteRT YOLO detection…":"Running LiteRT YOLO segmentation…",currentModelFile.name);
+    const results=await inferResults();
+    let entries;
+    if(projectMode==="detect"){
+      entries=detectionEntriesFromResults(results);
+    }else{
+      entries=await segmentationEntriesFromResults(results,r);
+    }
     hideLoading();
 
     pushUndo();
-    if(!append){
-      r.annotations=[];
-      r.confidences=[];
-    }
-
-    for(const b of boxes){
-      r.annotations.push([b.cls,b.x1,b.y1,b.x2,b.y2]);
-      r.confidences.push(b.score);
-    }
-
-    selected=null;
-    multi.clear();
-    markDirty();
-    refreshAll();
-    status(`LiteRT YOLO: ${boxes.length} box(es) added.`);
+    if(!append){r.annotations=[];r.confidences=[]}
+    for(const e of entries){r.annotations.push(e.ann);r.confidences.push(e.score)}
+    selected=null;selectedVertex=null;multi.clear();markDirty();refreshAll();
+    status(`LiteRT YOLO: ${entries.length} ${objectWord(entries.length!==1)} added.`);
   }catch(e){
-    try{ hideLoading(); }catch{}
+    try{hideLoading()}catch{}
     const detail=e?.stack||e?.message||String(e);
     status(`Inference error: ${detail}`);
     els.modelStatus.textContent=`Inference error: ${e?.message||e}`;
@@ -1224,41 +1859,39 @@ async function runYolo(append=false){
 els.runYoloBtn.onclick=()=>runYolo(false);
 
 async function singleClickPrediction(x,y){
-  const r=rec();
-  if(!r||!currentModelFile)return;
-
+  const r=rec();if(!r||!currentModelFile)return;
   try{
     showLoading("Single-click LiteRT prediction…",currentModelFile.name);
-    const boxes=await inferDetections(0.01,0.95);
-    hideLoading();
-
-    const candidates=boxes
-      .filter(b=>x>=b.x1&&x<=b.x2&&y>=b.y1&&y<=b.y2)
-      .sort((a,b)=>b.score-a.score);
-
-    if(!candidates.length){
-      status("No detected object contains that point.");
-      return;
+    const results=await inferResults(0.01,0.95);
+    let candidates;
+    if(projectMode==="detect"){
+      candidates=detectionEntriesFromResults(results)
+        .filter(e=>x>=e.ann[1]&&x<=e.ann[3]&&y>=e.ann[2]&&y<=e.ann[4]);
+    }else{
+      candidates=(await segmentationEntriesFromResults(results,r))
+        .filter(e=>pointInPolygonAnn(x,y,e.ann));
     }
-
-    pushUndo();
-    const b=candidates[0];
-    r.annotations.push([b.cls,b.x1,b.y1,b.x2,b.y2]);
-    r.confidences.push(b.score);
-    selected=r.annotations.length-1;
-    markDirty();
-    refreshAll();
+    hideLoading();
+    candidates.sort((a,b)=>b.score-a.score);
+    if(!candidates.length){status(`No predicted ${objectWord()} contains that point.`);return}
+    pushUndo();const e=candidates[0];
+    r.annotations.push(e.ann);r.confidences.push(e.score);selected=r.annotations.length-1;selectedVertex=null;multi.clear();
+    markDirty();refreshAll();
   }catch(e){
-    try{ hideLoading(); }catch{}
+    try{hideLoading()}catch{}
     status(`Single-click prediction error: ${e?.stack||e?.message||e}`);
   }
 }
 
 /* initial */
-els.confVal.textContent=(+els.conf.value).toFixed(2);els.iouVal.textContent=(+els.iou.value).toFixed(2);
+els.confVal.textContent=(+els.conf.value).toFixed(2);
+els.iouVal.textContent=(+els.iou.value).toFixed(2);
+els.simplifyVal.textContent=String(+els.simplifyTol.value);
+setSaveDirectory(null);
+updateTaskUI();
 resizeCanvas();refreshAll();
 setModelState("idle","Select one .tflite file.");
-status("Ready. Load images, then select one .tflite model. Model status will show SELECTED → LOADING → READY or LOAD FAILED.");
+status("Ready · Build 2026-10-09a. Choose Detection or Segmentation, then open a working folder.");
 </script>
 </body>
 </html>
