@@ -96,6 +96,9 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
     <button id="openDirBtn" title="Open one working folder, load its images and YOLO .txt annotations, and save annotations back into the same folder">Open Working Folder</button>
     <button id="loadFolderBtn" title="Import images and annotations for editing without choosing the save destination">Import Images / Annotations</button>
     <input id="folderInput" class="hidden" type="file" webkitdirectory multiple accept=".png,.jpg,.jpeg,.txt">
+    <button id="labelsFolderBtn" title="Load matching YOLO .txt labels from a separate folder. With direct folder access, this folder also becomes the annotation output folder.">Load Labels Folder</button>
+    <input id="labelsFolderInput" class="hidden" type="file" webkitdirectory multiple accept=".txt">
+    <span id="labelsFolderLabel" class="small">Labels: image/import folder</span>
     <button id="saveFolderBtn" title="Choose where annotation .txt files will be written when using imported files">Choose Annotation Save Folder</button>
     <span id="saveFolderLabel" class="small">Annotation output: not set</span>
     <button id="saveBtn" class="primary">Save Annotation</button>
@@ -136,8 +139,6 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 
       <div class="section">
         <h3>Global</h3>
-        <div class="row"><button data-shift="0,-1">↑ 1 px</button><button data-shift="0,1">↓ 1 px</button></div>
-        <div class="row"><button data-shift="-1,0">← 1 px</button><button data-shift="1,0">→ 1 px</button></div>
         <button id="dedupeBtn" style="width:100%">Delete duplicate boxes</button>
         <button id="deleteAllBtn" class="danger" style="width:100%;margin-top:6px">Delete all boxes</button>
       </div>
@@ -232,8 +233,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
     <b>Ctrl+click</b>: multi-select · drag empty space: marquee-select contained boxes<br>
     <b>Ctrl+C / Ctrl+V</b>: copy/paste boxes · <b>Q/A / E/D / ←/→</b>: previous/next image<br>
     <b>S</b>: save annotation · <b>Y</b>: run LiteRT YOLO · <b>Alt+click</b>: single-click YOLO prediction<br>
-    <b>Mouse wheel</b>: zoom at cursor · <b>middle-drag</b>: pan · <b>0</b>: reset view<br>
-    <b>4/6/8/2</b>: translate annotations left/right/up/down by 1 pixel.
+    <b>Mouse wheel</b>: zoom at cursor · <b>middle-drag</b>: pan · <b>0</b>: reset view
   </div>
   <div class="row" style="justify-content:flex-end;margin-top:12px"><button id="closeHelpBtn">Close</button></div>
 </dialog>
@@ -251,6 +251,7 @@ const COCO=["person","bicycle","car","motorcycle","airplane","bus","train","truc
 const $=id=>document.getElementById(id);
 const els={
  canvas:$("canvas"),stage:$("stageWrap"),openDirBtn:$("openDirBtn"),loadFolderBtn:$("loadFolderBtn"),folderInput:$("folderInput"),
+ labelsFolderBtn:$("labelsFolderBtn"),labelsFolderInput:$("labelsFolderInput"),labelsFolderLabel:$("labelsFolderLabel"),
  saveFolderBtn:$("saveFolderBtn"),saveFolderLabel:$("saveFolderLabel"),
  saveBtn:$("saveBtn"),saveAnnotatedBtn:$("saveAnnotatedBtn"),undoBtn:$("undoBtn"),helpBtn:$("helpBtn"),
  imageList:$("imageList"),prevBtn:$("prevBtn"),nextBtn:$("nextBtn"),jumpInput:$("jumpInput"),
@@ -280,6 +281,7 @@ window.addEventListener("unhandledrejection",ev=>{
 });
 
 let directoryHandle=null;
+let labelsDirectoryHandle=null;
 let saveDirectoryHandle=null;   // reused for all annotation writes during this page session
 let records=[];                  // {file,stem,name,bitmap,width,height,annotations,confidences,dirty,txtHandle}
 let current=-1;
@@ -374,6 +376,10 @@ function setSaveDirectory(handle){
     : "Annotation output: not set";
 }
 
+function setLabelsSourceLabel(name){
+  els.labelsFolderLabel.textContent=name ? `Labels: ${name}` : "Labels: image/import folder";
+}
+
 async function chooseSaveDirectory(){
   if(!window.showDirectoryPicker){
     status("Direct folder writing is unavailable in this browser. Use a Chromium-based browser.");
@@ -404,6 +410,8 @@ els.openDirBtn.onclick=async()=>{
   try{
     if(!window.showDirectoryPicker)throw new Error("Directory picker unavailable; use Load Folder / Files.");
     directoryHandle=await showDirectoryPicker({mode:"readwrite"});
+    labelsDirectoryHandle=directoryHandle;
+    setLabelsSourceLabel(directoryHandle.name);
     setSaveDirectory(directoryHandle);
     const files=await filesFromDirectory(directoryHandle);
     await loadFiles(files,true);
@@ -411,7 +419,88 @@ els.openDirBtn.onclick=async()=>{
 };
 els.loadFolderBtn.onclick=()=>els.folderInput.click();
 els.saveFolderBtn.onclick=()=>chooseSaveDirectory();
-els.folderInput.onchange=()=>loadFiles([...els.folderInput.files],false);
+els.folderInput.onchange=()=>{
+  labelsDirectoryHandle=null;
+  setLabelsSourceLabel("imported with images");
+  loadFiles([...els.folderInput.files],false);
+};
+
+async function applyLabelsFiles(files,sourceName="separate folder"){
+  if(!records.length){
+    status("Load images before selecting a separate labels folder.");
+    return false;
+  }
+
+  if(records.some(r=>r.dirty)){
+    const ok=confirm("Loading labels from another folder will replace unsaved in-memory annotations. Continue?");
+    if(!ok)return false;
+  }
+
+  const txtFiles=files.filter(f=>ext(f.name)===".txt"&&f.name.toLowerCase()!=="class_names.txt");
+  const txtMap=new Map(txtFiles.map(f=>[stem(f.name),f]));
+
+  const classFile=files.find(f=>f.name.toLowerCase()==="class_names.txt");
+  if(classFile){
+    const t=await classFile.text();
+    const names=t.split(/\r?\n|,/).map(s=>s.trim()).filter(Boolean);
+    if(names.length){classNames=names;regenColors();updateClassUI();savePrefs()}
+  }
+
+  let matched=0;
+  for(const r of records){
+    r.annotations=[];
+    r.confidences=[];
+    const tf=txtMap.get(r.stem);
+    if(tf){
+      parseYoloText(await tf.text(),r);
+      matched++;
+    }
+    r.dirty=false;
+    r.lastSavedAnnotations=r.annotations.map(a=>a.slice());
+    r.lastSavedConfidences=r.confidences.slice();
+  }
+
+  selected=null;multi.clear();undoStack=[];
+  setLabelsSourceLabel(sourceName);
+  refreshAll();
+  status(`Loaded labels for ${matched}/${records.length} images from ${sourceName}.`);
+  return true;
+}
+
+els.labelsFolderBtn.onclick=async()=>{
+  if(!records.length){
+    status("Load images before selecting a separate labels folder.");
+    return;
+  }
+  if(window.showDirectoryPicker){
+    try{
+      const handle=await showDirectoryPicker({mode:"readwrite"});
+      const files=await filesFromDirectory(handle);
+      const applied=await applyLabelsFiles(files,handle.name);
+      if(applied){
+        labelsDirectoryHandle=handle;
+        setSaveDirectory(handle);
+        status(`Loaded labels from ${handle.name}. Annotation output also set to this folder.`);
+      }
+      return;
+    }catch(e){
+      if(e.name==="AbortError")return;
+      console.warn("Direct labels folder picker failed; using file-folder fallback.",e);
+    }
+  }
+  els.labelsFolderInput.click();
+};
+
+els.labelsFolderInput.onchange=async()=>{
+  const files=[...els.labelsFolderInput.files];
+  if(!files.length)return;
+  labelsDirectoryHandle=null;
+  const rel=files[0].webkitRelativePath||"";
+  const sourceName=rel.includes("/")?rel.split("/")[0]:"selected labels folder";
+  await applyLabelsFiles(files,sourceName);
+  status(`Loaded labels from ${sourceName}. Choose Annotation Save Folder if you want to write changes there.`);
+  els.labelsFolderInput.value="";
+};
 
 async function loadFiles(files,fromDirectory=false){
   if(!files.length)return;
@@ -627,15 +716,6 @@ els.addBoxBtn.onclick=()=>{mode=mode==="add"?"select":"add";els.addBoxBtn.classL
 els.showConf.onchange=()=>{savePrefs();requestDraw()};
 els.autoSave.onchange=savePrefs;
 
-document.querySelectorAll("[data-shift]").forEach(b=>b.onclick=()=>{
-  const [dx,dy]=b.dataset.shift.split(",").map(Number);translateAll(dx,dy);
-});
-function translateAll(dx,dy){
-  const r=rec();if(!r)return;pushUndo();
-  r.annotations=r.annotations.map(([c,x1,y1,x2,y2])=>[c,clamp(x1+dx,0,r.width),clamp(y1+dy,0,r.height),clamp(x2+dx,0,r.width),clamp(y2+dy,0,r.height)]);
-  markDirty();refreshAll();
-}
-
 async function flipImage(horizontal){
   const r=rec();if(!r)return;pushUndo();
   const c=document.createElement("canvas");c.width=r.width;c.height=r.height;const x=c.getContext("2d");
@@ -843,7 +923,6 @@ window.addEventListener("keydown",ev=>{
   if(k==="y"){runYolo(false);return}
   if(k==="q"||k==="a"||ev.key==="ArrowLeft"){prev();return}
   if(k==="e"||k==="d"||ev.key==="ArrowRight"){next();return}
-  if(k==="4"){translateAll(-1,0);return}if(k==="6"){translateAll(1,0);return}if(k==="8"){translateAll(0,-1);return}if(k==="2"){translateAll(0,1);return}
   if(k==="0"){resetView();return}
 });
 
