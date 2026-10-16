@@ -413,7 +413,71 @@ let gammaRenderToken=0;
 let labelsSourceName=null;
 let pendingSessionRestore=null;
 let pendingLocalModelName=null;
-const SESSION_SCHEMA_VERSION=1;
+const SESSION_SCHEMA_VERSION=2;
+const SESSION_HANDLE_DB="avaw-session-handles";
+const SESSION_HANDLE_STORE="handles";
+
+function sessionHandleKey(){
+  if(globalThis.crypto?.randomUUID)return `session-${crypto.randomUUID()}`;
+  return `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+function openSessionHandleDb(){
+  return new Promise((resolve,reject)=>{
+    if(!globalThis.indexedDB){reject(new Error("IndexedDB unavailable"));return}
+    const req=indexedDB.open(SESSION_HANDLE_DB,1);
+    req.onupgradeneeded=()=>{
+      const db=req.result;
+      if(!db.objectStoreNames.contains(SESSION_HANDLE_STORE))db.createObjectStore(SESSION_HANDLE_STORE);
+    };
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error||new Error("Could not open IndexedDB"));
+  });
+}
+async function rememberSessionHandles(key){
+  if(!key)return false;
+  const db=await openSessionHandleDb();
+  try{
+    const payload={
+      working:directoryHandle||null,
+      labels:labelsDirectoryHandle||null,
+      annotationOutput:saveDirectoryHandle||null,
+      savedAt:new Date().toISOString()
+    };
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction(SESSION_HANDLE_STORE,"readwrite");
+      tx.objectStore(SESSION_HANDLE_STORE).put(payload,key);
+      tx.oncomplete=()=>resolve();
+      tx.onerror=()=>reject(tx.error||new Error("Could not save folder handles"));
+      tx.onabort=()=>reject(tx.error||new Error("Saving folder handles was aborted"));
+    });
+    return true;
+  }finally{db.close()}
+}
+async function recalledSessionHandles(key){
+  if(!key)return null;
+  const db=await openSessionHandleDb();
+  try{
+    return await new Promise((resolve,reject)=>{
+      const tx=db.transaction(SESSION_HANDLE_STORE,"readonly");
+      const req=tx.objectStore(SESSION_HANDLE_STORE).get(key);
+      req.onsuccess=()=>resolve(req.result||null);
+      req.onerror=()=>reject(req.error||new Error("Could not read saved folder handles"));
+    });
+  }finally{db.close()}
+}
+async function sessionStartIn(kind){
+  const key=pendingSessionRestore?.localHandleKey;
+  if(!key)return null;
+  try{
+    const saved=await recalledSessionHandles(key);
+    const h=saved?.[kind];
+    return h&&h.kind==="directory"?h:null;
+  }catch(e){
+    console.warn("Could not restore saved folder location from IndexedDB.",e);
+    return null;
+  }
+}
+
 
 function status(s){els.status.textContent=s}
 function natural(a,b){return a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"})}
@@ -1039,10 +1103,21 @@ function sessionFileName(){
   const d=new Date(),pad=n=>String(n).padStart(2,"0");
   return `avaw_session_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.json`;
 }
-function saveSessionJson(){
-  const json=JSON.stringify(sessionSnapshot(),null,2);
+async function saveSessionJson(){
+  const cfg=sessionSnapshot();
+  const key=sessionHandleKey();
+  let remembered=false;
+  try{
+    remembered=await rememberSessionHandles(key);
+    if(remembered)cfg.localHandleKey=key;
+  }catch(e){
+    console.warn("Could not persist session folder handles in IndexedDB.",e);
+  }
+  const json=JSON.stringify(cfg,null,2);
   downloadBlob(new Blob([json],{type:"application/json"}),sessionFileName());
-  status("Session settings saved to JSON. Folder permissions and local model bytes are not embedded.");
+  status(remembered
+    ? "Session saved. Folder locations are remembered on this browser; permission may still be requested when restoring."
+    : "Session saved. Folder locations could not be remembered by this browser, so restore will use the normal folder picker.");
 }
 function validSessionObject(cfg){
   return !!cfg&&typeof cfg==="object"&&cfg.app==="AVAW Annotator"&&Number(cfg.schemaVersion)>=1;
@@ -1137,7 +1212,7 @@ function updateSessionRestoreDialog(){
     if(!labelsReady)lines.push(`Then reconnect labels folder “${labels.name}”.`);
     else lines.push(`Labels folder “${labels.name}” is connected.`);
   }
-  lines.push("Browsers do not allow a JSON file to reopen local folders without your permission.");
+  lines.push("The saved folder location is used as the picker start location when this browser still has its local handle; you must still confirm access.");
   els.sessionRestoreText.textContent=lines.join(" ");
   els.sessionWorkingBtn.classList.toggle("hidden",workingReady);
   els.sessionLabelsBtn.classList.toggle("hidden",!needLabels||!workingReady||labelsReady);
@@ -1158,7 +1233,10 @@ async function reconnectSessionWorkingFolder(){
   if(!window.showDirectoryPicker){status("Folder reconnection requires a Chromium-based browser with directory access.");return false}
   try{
     const expected=cfg?.folders?.working?.name||"";
-    const handle=await showDirectoryPicker({mode:"readwrite",id:"avaw-session-working"});
+    const startIn=await sessionStartIn("working");
+    const pickerOptions={mode:"readwrite",id:"avaw-session-working"};
+    if(startIn)pickerOptions.startIn=startIn;
+    const handle=await showDirectoryPicker(pickerOptions);
     if(expected&&handle.name!==expected){
       const ok=confirm(`This session expects working folder “${expected}”, but you selected “${handle.name}”. Load it anyway?`);
       if(!ok)return false;
@@ -1190,7 +1268,10 @@ async function reconnectSessionLabelsFolder(){
   if(!cfg||!expected)return false;
   if(!window.showDirectoryPicker){status("Folder reconnection requires a Chromium-based browser with directory access.");return false}
   try{
-    const handle=await showDirectoryPicker({mode:"readwrite",id:"avaw-session-labels"});
+    const startIn=await sessionStartIn("labels");
+    const pickerOptions={mode:"readwrite",id:"avaw-session-labels"};
+    if(startIn)pickerOptions.startIn=startIn;
+    const handle=await showDirectoryPicker(pickerOptions);
     if(handle.name!==expected){
       const ok=confirm(`This session expects labels folder “${expected}”, but you selected “${handle.name}”. Load it anyway?`);
       if(!ok)return false;
