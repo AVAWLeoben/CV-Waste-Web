@@ -1365,7 +1365,8 @@ function drawBoxesToContext(x,r,s,ox,oy,interactive){
     x.fillStyle="rgba(0,0,0,.70)";x.fillRect(X,Y-th,Math.ceil(tw)+padX*2,th);
     x.fillStyle=color;x.fillText(lab,X+padX,Y-th+padY);
     if(interactive&&i===selected){
-      const hs=8;for(const [cx,cy] of [[X,Y],[X+W,Y],[X,Y+H],[X+W,Y+H]]){x.fillStyle="#facc15";x.fillRect(cx-hs/2,cy-hs/2,hs,hs)}
+      // Keep resize handles a constant on-screen size, independent of image dimensions/zoom.
+      const hs=10;for(const [cx,cy] of [[X,Y],[X+W,Y],[X,Y+H],[X+W,Y+H]]){x.fillStyle="#facc15";x.fillRect(cx-hs/2,cy-hs/2,hs,hs)}
     }
   });x.restore();
 }
@@ -1419,7 +1420,9 @@ function hitHandle(cx,cy){
   if(projectMode!=="detect"||selected===null)return null;
   const r=rec(),a=r?.annotations[selected];if(!a)return null;
   const pts={tl:canvasPointFromImage(a[1],a[2]),tr:canvasPointFromImage(a[3],a[2]),bl:canvasPointFromImage(a[1],a[4]),br:canvasPointFromImage(a[3],a[4])};
-  for(const [k,p] of Object.entries(pts))if(Math.hypot(cx-p.x,cy-p.y)<10)return k;return null;
+  // Hit tolerance is measured in canvas/screen pixels, so it stays constant regardless of image size or zoom.
+  const hitRadius=18;
+  for(const [k,p] of Object.entries(pts))if(Math.hypot(cx-p.x,cy-p.y)<=hitRadius)return k;return null;
 }
 function hitVertex(cx,cy){
   if(projectMode!=="segment"||selected===null)return null;
@@ -1737,7 +1740,10 @@ els.canvas.ondblclick=ev=>{
 els.canvas.onwheel=ev=>{
   if(!rec())return;ev.preventDefault();
   const p=canvasPoint(ev),before=imagePointFromCanvas(p.x,p.y),factor=ev.deltaY<0?1.1:0.9;
-  zoom=clamp(zoom*factor,1,12);const s=fitScale*zoom;
+  const nextZoom=clamp(zoom*factor,1,12);
+  // When wheel-zoom returns to 1×, restore the fitted, centered view instead of keeping the cursor-anchored offset.
+  if(factor<1&&nextZoom===1){resetView();return}
+  zoom=nextZoom;const s=fitScale*zoom;
   offsetX=p.x-before.x*s;offsetY=p.y-before.y*s;requestDraw();
 };
 els.canvas.oncontextmenu=ev=>{ev.preventDefault();showContext(ev.clientX,ev.clientY)};
@@ -1761,7 +1767,21 @@ function showContext(x,y){
     add("Undo",undo);add("Save annotation",()=>saveCurrent());add(`Paste ${objectWord(true)}`,()=>els.pasteBtn.click());
     add(`New ${objectWord()}`,()=>els.addBoxBtn.click());
   }
-  els.contextMenu.style.left=x+"px";els.contextMenu.style.top=y+"px";els.contextMenu.style.display="block";
+
+  // Measure the finished menu, then choose a quadrant that keeps it inside the viewport.
+  // Normally it opens down/right; near the lower/right edges it flips up/left as needed.
+  const gap=6,margin=8;
+  els.contextMenu.style.visibility="hidden";
+  els.contextMenu.style.left="0px";els.contextMenu.style.top="0px";els.contextMenu.style.display="block";
+  const rect=els.contextMenu.getBoundingClientRect();
+  let left=x+gap,top=y+gap;
+  if(left+rect.width>window.innerWidth-margin)left=x-rect.width-gap;
+  if(top+rect.height>window.innerHeight-margin)top=y-rect.height-gap;
+  left=clamp(left,margin,Math.max(margin,window.innerWidth-rect.width-margin));
+  top=clamp(top,margin,Math.max(margin,window.innerHeight-rect.height-margin));
+  els.contextMenu.style.left=Math.round(left)+"px";
+  els.contextMenu.style.top=Math.round(top)+"px";
+  els.contextMenu.style.visibility="visible";
 }
 function hideContext(){els.contextMenu.style.display="none"}
 document.addEventListener("click",e=>{if(!els.contextMenu.contains(e.target))hideContext()});
