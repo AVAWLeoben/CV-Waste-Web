@@ -95,7 +95,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 <body>
 <div class="app">
   <div class="topbar">
-    <div class="brand">AVAW Annotator · LiteRT <span class="badge">Build 2026-10-16f</span></div>
+    <div class="brand">AVAW Annotator · LiteRT <span class="badge">Build 2026-10-16g</span></div>
     <label class="small" for="taskMode">Task</label>
     <select id="taskMode" title="Annotation format for the current dataset">
       <option value="detect">Detection · BBOX</option>
@@ -386,6 +386,9 @@ let lastPolyClickCanvas=null;
 const POLY_DOUBLE_CLICK_MS=420;
 const POLY_DOUBLE_CLICK_PX=12;
 let drag=null,marquee=null,pan=null;
+let lastMiddleClickTime=0,lastMiddleClickPoint=null;
+const MIDDLE_DOUBLE_CLICK_MS=420;
+const MIDDLE_DOUBLE_CLICK_PX=14;
 let fitScale=1,zoom=1,offsetX=0,offsetY=0;
 const REPO_OWNER="AVAWLeoben";
 const REPO_NAME="CV-Waste-Web";
@@ -1954,7 +1957,26 @@ els.canvas.onpointerdown=async ev=>{
   const r=rec();if(!r)return;
   hideContext();els.canvas.setPointerCapture(ev.pointerId);
   const p=canvasPoint(ev),ip=imagePointFromCanvas(p.x,p.y);
-  if(ev.button===1){pan={x:p.x,y:p.y,ox:offsetX,oy:offsetY};return}
+  if(ev.button===1){
+    ev.preventDefault();
+    const now=performance.now();
+    const isDoubleMiddle=
+      lastMiddleClickPoint!==null &&
+      (now-lastMiddleClickTime)<=MIDDLE_DOUBLE_CLICK_MS &&
+      Math.hypot(p.x-lastMiddleClickPoint.x,p.y-lastMiddleClickPoint.y)<=MIDDLE_DOUBLE_CLICK_PX;
+    if(isDoubleMiddle){
+      lastMiddleClickTime=0;
+      lastMiddleClickPoint=null;
+      pan=null;
+      resetView();
+      status("View reset to 1× and recentered.");
+      return;
+    }
+    lastMiddleClickTime=now;
+    lastMiddleClickPoint={x:p.x,y:p.y};
+    pan={x:p.x,y:p.y,ox:offsetX,oy:offsetY};
+    return;
+  }
   if(ev.button!==0)return;
   if(hasSingleClickPredictionModifier(ev)){await singleClickPrediction(ip.x,ip.y);return}
 
@@ -2113,6 +2135,7 @@ els.canvas.onwheel=ev=>{
   zoom=nextZoom;const s=fitScale*zoom;
   offsetX=p.x-before.x*s;offsetY=p.y-before.y*s;requestDraw();
 };
+els.canvas.onauxclick=ev=>{if(ev.button===1)ev.preventDefault()};
 els.canvas.oncontextmenu=ev=>{ev.preventDefault();showContext(ev.clientX,ev.clientY)};
 
 function showContext(x,y){
@@ -2780,7 +2803,7 @@ setSaveDirectory(null);
 updateTaskUI();
 resizeCanvas();refreshAll();
 setModelState("idle","Select a local or repository .tflite model.");
-status("Ready · Build 2026-10-16f. Choose Detection or Segmentation, then open a working folder.");
+status("Ready · Build 2026-10-16g. Choose Detection or Segmentation, then open a working folder.");
 renderRepoModelOptions();
 </script>
 </body>
