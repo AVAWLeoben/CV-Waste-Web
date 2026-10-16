@@ -95,7 +95,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 <body>
 <div class="app">
   <div class="topbar">
-    <div class="brand">AVAW Annotator · LiteRT <span class="badge">Build 2026-10-16b</span></div>
+    <div class="brand">AVAW Annotator · LiteRT <span class="badge">Build 2026-10-16c</span></div>
     <label class="small" for="taskMode">Task</label>
     <select id="taskMode" title="Annotation format for the current dataset">
       <option value="detect">Detection · BBOX</option>
@@ -110,6 +110,9 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
     <button id="saveBtn" class="primary">Save Annotation</button>
     <button id="saveAnnotatedBtn">Save Annotated PNG</button>
     <div class="spacer"></div>
+    <button id="saveSessionBtn" title="Save the current app settings and session metadata to a local JSON file">Save Session</button>
+    <button id="loadSessionBtn" title="Load app settings and session metadata from a local JSON file">Load Session</button>
+    <input id="sessionFileInput" class="hidden" type="file" accept=".json,application/json">
     <button id="undoBtn">Undo</button>
     <button id="helpBtn">Help</button>
   </div>
@@ -216,8 +219,8 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 
         <div style="border-top:1px solid var(--border);padding-top:9px;margin-top:3px">
           <label class="small" for="repoModelSelect">Repository models · <b id="repoModeLabel">BBOX</b></label>
-          <select id="repoModelSelect" style="width:100%;padding:7px;margin-top:4px" disabled>
-            <option value="">Scanning repository…</option>
+          <select id="repoModelSelect" style="width:100%;padding:7px;margin-top:4px">
+            <option value="">Open to scan repository…</option>
           </select>
           <button id="loadRepoModelBtn" style="width:100%;margin-top:6px" disabled>Load Repo Model</button>
           <div id="repoModelHint" class="small" style="margin:6px 0 10px">
@@ -298,7 +301,9 @@ const els={
  canvas:$("canvas"),stage:$("stageWrap"),taskMode:$("taskMode"),openDirBtn:$("openDirBtn"),
  labelsFolderBtn:$("labelsFolderBtn"),labelsFolderInput:$("labelsFolderInput"),labelsFolderLabel:$("labelsFolderLabel"),
  saveFolderBtn:$("saveFolderBtn"),saveFolderLabel:$("saveFolderLabel"),
- saveBtn:$("saveBtn"),saveAnnotatedBtn:$("saveAnnotatedBtn"),undoBtn:$("undoBtn"),helpBtn:$("helpBtn"),
+ saveBtn:$("saveBtn"),saveAnnotatedBtn:$("saveAnnotatedBtn"),
+ saveSessionBtn:$("saveSessionBtn"),loadSessionBtn:$("loadSessionBtn"),sessionFileInput:$("sessionFileInput"),
+ undoBtn:$("undoBtn"),helpBtn:$("helpBtn"),
  imageList:$("imageList"),prevBtn:$("prevBtn"),nextBtn:$("nextBtn"),jumpInput:$("jumpInput"),
  classSelect:$("classSelect"),annotationHeading:$("annotationHeading"),addBoxBtn:$("addBoxBtn"),deleteBtn:$("deleteBtn"),copyBtn:$("copyBtn"),pasteBtn:$("pasteBtn"),
  segTools:$("segTools"),polyDrawMode:$("polyDrawMode"),polyDrawHint:$("polyDrawHint"),
@@ -371,6 +376,10 @@ let YOLO=null;
 let runtimeLoadPromise=null;
 let loadClock=null,loadStarted=0;
 let redrawPending=false;
+let labelsSourceName=null;
+let pendingSessionRestore=null;
+let pendingLocalModelName=null;
+const SESSION_SCHEMA_VERSION=1;
 
 function status(s){els.status.textContent=s}
 function natural(a,b){return a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"})}
@@ -500,7 +509,7 @@ function setProjectMode(next,{force=false,silent=false}={}){
   }
 
   updateTaskUI();savePrefs();refreshAll();
-  void refreshRepoModelSelector();
+  renderRepoModelOptions();
   if(!silent)status(`Annotation task: ${projectMode==="detect"?"Detection / BBOX":"Segmentation / Polygon"}.`);
   return true;
 }
@@ -547,6 +556,7 @@ function setSaveDirectory(handle){
     : "Annotation output: not set";
 }
 function setLabelsSourceLabel(name){
+  labelsSourceName=name||null;
   els.labelsFolderLabel.textContent=name ? `Labels: ${name}` : "Labels: image folder";
 }
 async function chooseSaveDirectory(){
@@ -702,6 +712,10 @@ els.labelsFolderBtn.onclick=async()=>{
       if(applied){
         labelsDirectoryHandle=handle;
         setSaveDirectory(handle);
+        if(pendingSessionRestore?.folders?.labels?.name===handle.name){
+          restoreSessionImagePosition();
+          status(`Session labels folder reconnected: ${handle.name}.`);
+        }
       }
       return;
     }catch(e){
@@ -718,7 +732,11 @@ els.labelsFolderInput.onchange=async()=>{
   labelsDirectoryHandle=null;
   const rel=files[0].webkitRelativePath||"";
   const sourceName=rel.includes("/")?rel.split("/")[0]:"selected labels folder";
-  await applyLabelsFiles(files,sourceName);
+  const applied=await applyLabelsFiles(files,sourceName);
+  if(applied&&pendingSessionRestore?.folders?.labels?.name===sourceName){
+    restoreSessionImagePosition();
+    status(`Session labels folder reconnected: ${sourceName}.`);
+  }
   els.labelsFolderInput.value="";
 };
 
@@ -830,7 +848,7 @@ async function loadFiles(files,fromDirectory=false){
     // Keep only lightweight File objects and label text here. Pixel decoding is lazy:
     // the current image is decoded on first display, then the next image is prefetched while idle.
     const newRecords=imageFiles.map(file=>({
-      file,name:file.name,stem:stem(file.name),bitmap:null,width:0,height:0,decodePromise:null,
+      file,name:file.name,relativePath:file.webkitRelativePath||file.name,stem:stem(file.name),bitmap:null,width:0,height:0,decodePromise:null,
       pendingLabelText:txtTexts.has(labelKey(file.name))?txtTexts.get(labelKey(file.name)):null,
       annotations:[],confidences:[],dirty:false,
       lastSavedAnnotations:[],lastSavedConfidences:[]
@@ -839,6 +857,12 @@ async function loadFiles(files,fromDirectory=false){
     records=newRecords;current=-1;selected=null;selectedVertex=null;multi.clear();undoStack=[];
     hideLoading();
     await showRecord(0,false,{immediateLoad:true});
+    const restoredPosition=restoreSessionImagePosition();
+    if(pendingSessionRestore?.folders?.working?.name&&directoryHandle&&pendingSessionRestore.folders.working.name!==directoryHandle.name){
+      status(`Session expected working folder “${pendingSessionRestore.folders.working.name}”, but “${directoryHandle.name}” was opened.`);
+    }else if(pendingSessionRestore?.folders?.labels?.name&&!pendingSessionRestore.folders.labels.sameAsWorking){
+      status(`Working folder reconnected${restoredPosition?" and saved image restored":""}. Now load labels folder “${pendingSessionRestore.folders.labels.name}”.`);
+    }
     if(kinds.size>1){
       status(`Loaded ${records.length} image references. Mixed BBOX and segmentation .txt files were found; only ${projectMode==="detect"?"BBOX":"segmentation"} lines are used.`);
     }else{
@@ -919,6 +943,171 @@ function downloadBlob(blob,name){
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
+function currentImageRelativePath(){
+  const r=rec();
+  return r ? (r.relativePath||r.file?.webkitRelativePath||r.name||null) : null;
+}
+function sameDirectoryHandle(a,b){return !!a&&!!b&&a===b}
+function sessionSnapshot(){
+  const r=rec();
+  const labelsSameAsWorking=sameDirectoryHandle(labelsDirectoryHandle,directoryHandle)||
+    (!!directoryHandle&&labelsSourceName===directoryHandle.name);
+  const saveSameAsWorking=sameDirectoryHandle(saveDirectoryHandle,directoryHandle);
+  return {
+    app:"AVAW Annotator",
+    schemaVersion:SESSION_SCHEMA_VERSION,
+    savedAt:new Date().toISOString(),
+    task:projectMode,
+    classes:{
+      names:classNames.slice(),
+      colors:classColors.map(c=>Array.isArray(c)?c.slice():c),
+      selectedIndex:Math.max(0,Number(els.classSelect.value)||0)
+    },
+    ui:{
+      autoSave:!!els.autoSave.checked,
+      showConfidence:!!els.showConf.checked,
+      simplifyTolerance:Number(els.simplifyTol.value),
+      polygonDrawMode:els.polyDrawMode.value
+    },
+    inference:{
+      confidence:Number(els.conf.value),
+      nmsIoU:Number(els.iou.value),
+      model: currentModelSource ? {
+        source:currentModelSource,
+        fileName:currentModelFile?.name||localModelFile?.name||null,
+        displayName:currentModelDisplayName||null,
+        task:currentModelSource==="repo"?(currentRepoModelTask||projectMode):projectMode,
+        loaded:modelLoadState==="ready"
+      } : null
+    },
+    folders:{
+      working:directoryHandle?{name:directoryHandle.name}:null,
+      labels:labelsSourceName?{name:labelsSourceName,sameAsWorking:labelsSameAsWorking}:null,
+      annotationOutput:saveDirectoryHandle?{name:saveDirectoryHandle.name,sameAsWorking:saveSameAsWorking}:null
+    },
+    position:{
+      imageIndex:current,
+      imageName:r?.name||null,
+      relativePath:currentImageRelativePath()
+    }
+  };
+}
+function sessionFileName(){
+  const d=new Date(),pad=n=>String(n).padStart(2,"0");
+  return `avaw_session_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.json`;
+}
+function saveSessionJson(){
+  const json=JSON.stringify(sessionSnapshot(),null,2);
+  downloadBlob(new Blob([json],{type:"application/json"}),sessionFileName());
+  status("Session settings saved to JSON. Folder permissions and local model bytes are not embedded.");
+}
+function validSessionObject(cfg){
+  return !!cfg&&typeof cfg==="object"&&cfg.app==="AVAW Annotator"&&Number(cfg.schemaVersion)>=1;
+}
+function applySessionSettings(cfg){
+  const names=cfg?.classes?.names;
+  const colors=cfg?.classes?.colors;
+  if(Array.isArray(names)&&names.length){
+    classNames=names.map(v=>String(v));
+    if(Array.isArray(colors)&&colors.length===names.length){
+      classColors=colors.map(c=>Array.isArray(c)&&c.length>=3?c.slice(0,3).map(Number):null);
+      if(classColors.some(c=>!c||c.some(v=>!Number.isFinite(v))))regenColors();
+    }else regenColors();
+  }
+
+  if(cfg.task==="detect"||cfg.task==="segment"){
+    setProjectMode(cfg.task,{force:true,silent:true});
+  }
+
+  if(typeof cfg?.ui?.autoSave==="boolean")els.autoSave.checked=cfg.ui.autoSave;
+  if(typeof cfg?.ui?.showConfidence==="boolean")els.showConf.checked=cfg.ui.showConfidence;
+  if(Number.isFinite(Number(cfg?.ui?.simplifyTolerance)))els.simplifyTol.value=Number(cfg.ui.simplifyTolerance);
+  if(cfg?.ui?.polygonDrawMode==="click"||cfg?.ui?.polygonDrawMode==="drag")els.polyDrawMode.value=cfg.ui.polygonDrawMode;
+  if(Number.isFinite(Number(cfg?.inference?.confidence)))els.conf.value=clamp(Number(cfg.inference.confidence),0.01,0.95);
+  if(Number.isFinite(Number(cfg?.inference?.nmsIoU)))els.iou.value=clamp(Number(cfg.inference.nmsIoU),0.10,0.95);
+
+  updateTaskUI();
+  updateClassUI();
+  els.confVal.textContent=(+els.conf.value).toFixed(2);
+  els.iouVal.textContent=(+els.iou.value).toFixed(2);
+  els.simplifyVal.textContent=String(+els.simplifyTol.value);
+  const selectedIndex=clamp(Math.trunc(Number(cfg?.classes?.selectedIndex)||0),0,Math.max(0,classNames.length-1));
+  els.classSelect.value=String(selectedIndex);
+  savePrefs();
+  requestDraw();
+}
+async function restoreRepoModelFromSession(modelCfg){
+  if(!modelCfg?.fileName)return false;
+  if((modelCfg.task==="detect"||modelCfg.task==="segment")&&modelCfg.task!==projectMode)return false;
+  await refreshRepoModelSelector({force:false});
+  const option=[...els.repoModelSelect.options].find(o=>o.dataset?.name===modelCfg.fileName);
+  if(!option){
+    status(`Session loaded, but repo model ${modelCfg.fileName} was not found.`);
+    return false;
+  }
+  els.repoModelSelect.value=option.value;
+  updateModelButtons();
+  return await loadRepoModelOption(option);
+}
+function restoreSessionImagePosition(){
+  const cfg=pendingSessionRestore;
+  if(!cfg||!records.length)return false;
+  const pos=cfg.position||{};
+  let idx=-1;
+  if(pos.relativePath){
+    idx=records.findIndex(r=>(r.relativePath||r.file?.webkitRelativePath||r.name)===pos.relativePath);
+  }
+  if(idx<0&&pos.imageName)idx=records.findIndex(r=>r.name===pos.imageName);
+  if(idx<0&&Number.isInteger(pos.imageIndex)&&pos.imageIndex>=0&&pos.imageIndex<records.length)idx=pos.imageIndex;
+  if(idx>=0&&idx!==current){void showRecord(idx,false,{immediateLoad:true});return true}
+  return idx>=0;
+}
+function describeSessionReconnect(cfg){
+  const working=cfg?.folders?.working?.name;
+  const labels=cfg?.folders?.labels;
+  const parts=[];
+  if(working&&!directoryHandle)parts.push(`reconnect working folder “${working}”`);
+  if(labels?.name&&!labels.sameAsWorking&&(!labelsDirectoryHandle||labelsDirectoryHandle.name!==labels.name))parts.push(`reconnect labels folder “${labels.name}”`);
+  if(pendingLocalModelName)parts.push(`reselect local model “${pendingLocalModelName}”`);
+  return parts.join("; ");
+}
+async function loadSessionJsonFile(file){
+  let cfg;
+  try{cfg=JSON.parse(await file.text())}catch(e){throw new Error(`Invalid JSON: ${e.message}`)}
+  if(!validSessionObject(cfg))throw new Error("This is not a supported AVAW session file.");
+
+  if(records.some(r=>r.dirty)){
+    const ok=confirm("Loading a session can replace current in-memory settings and annotation state. Unsaved annotation edits may be lost. Continue?");
+    if(!ok)return false;
+  }
+
+  pendingSessionRestore=cfg;
+  pendingLocalModelName=null;
+  applySessionSettings(cfg);
+
+  const modelCfg=cfg?.inference?.model;
+  if(modelCfg?.source==="repo"&&modelCfg.loaded!==false){
+    await restoreRepoModelFromSession(modelCfg);
+  }else if(modelCfg?.source==="local"&&modelCfg.fileName){
+    pendingLocalModelName=modelCfg.fileName;
+    currentModel=null;currentModelFile=null;currentModelSource=null;currentModelDisplayName="";modelClassNames=[];
+    els.modelFileName.textContent=`Session expects local model: ${modelCfg.fileName}`;
+    setModelState("idle","Reselect the local .tflite file, then click Load Local Model.");
+  }
+
+  if(directoryHandle&&cfg?.folders?.working?.name===directoryHandle.name)restoreSessionImagePosition();
+  const reconnect=describeSessionReconnect(cfg);
+  status(reconnect?`Session loaded · ${reconnect}.`:`Session loaded and settings restored.`);
+  return true;
+}
+
+els.saveSessionBtn.onclick=saveSessionJson;
+els.loadSessionBtn.onclick=()=>{els.sessionFileInput.value="";els.sessionFileInput.click()};
+els.sessionFileInput.onchange=async()=>{
+  const file=els.sessionFileInput.files?.[0];
+  if(!file)return;
+  try{await loadSessionJsonFile(file)}catch(e){status(`Session load failed: ${e?.message||e}`)}
+};
 async function saveAnnotated(){
   const r=rec();if(!r)return;
   const c=document.createElement("canvas");c.width=r.width;c.height=r.height;
@@ -1706,8 +1895,8 @@ function renderRepoModelOptions(){
   els.repoModelSelect.innerHTML="";
 
   if(models===null){
-    const o=document.createElement("option");o.value="";o.textContent="Scanning repository…";els.repoModelSelect.appendChild(o);
-    els.repoModelSelect.disabled=true;
+    const o=document.createElement("option");o.value="";o.textContent="Open to scan repository…";els.repoModelSelect.appendChild(o);
+    els.repoModelSelect.disabled=false;
   }else if(!models.length){
     const o=document.createElement("option");o.value="";o.textContent="No compatible .tflite models found";els.repoModelSelect.appendChild(o);
     els.repoModelSelect.disabled=true;
@@ -1879,6 +2068,7 @@ els.modelInput.onchange=()=>{
   }
 
   localModelFile=file;
+  if(pendingLocalModelName&&file.name===pendingLocalModelName)pendingLocalModelName=null;
   setModelState("selected",`${modelDisplayName(file.name)} selected locally. Click Load Local Model.`);
   updateModelButtons();
 };
@@ -1900,13 +2090,18 @@ els.loadModelBtn.onclick=async()=>{
   }catch{}
 };
 
+els.repoModelSelect.onfocus=()=>{
+  if(repoModels[projectMode]===null)void refreshRepoModelSelector();
+};
+els.repoModelSelect.onpointerdown=()=>{
+  if(repoModels[projectMode]===null)void refreshRepoModelSelector();
+};
 els.repoModelSelect.onchange=()=>updateModelButtons();
 
-els.loadRepoModelBtn.onclick=async()=>{
-  const option=els.repoModelSelect.selectedOptions?.[0];
+async function loadRepoModelOption(option){
   const url=option?.value;
   const name=option?.dataset?.name;
-  if(!url||!name)return;
+  if(!url||!name)return false;
 
   const modeAtStart=projectMode;
   const display=modelDisplayName(name);
@@ -1926,12 +2121,14 @@ els.loadRepoModelBtn.onclick=async()=>{
     currentModelSource="repo";
     currentModelDisplayName=display;
     currentRepoModelTask=modeAtStart;
+    pendingLocalModelName=null;
     els.backendStat.textContent="—";
     els.preTime.textContent="—";
     els.inferTime.textContent="—";
     els.postTime.textContent="—";
 
     await loadCurrentModel();
+    return true;
   }catch(e){
     hideLoading();
     if(currentModelSource!=="repo"||currentModelDisplayName!==display){
@@ -1940,7 +2137,12 @@ els.loadRepoModelBtn.onclick=async()=>{
     setModelState("error",`${display} · ${e?.message||e}`);
     status(`Repository model load failed: ${e?.message||e}`);
     console.error("Repository model load failed:",e);
+    return false;
   }
+}
+
+els.loadRepoModelBtn.onclick=async()=>{
+  await loadRepoModelOption(els.repoModelSelect.selectedOptions?.[0]);
 };
 
 els.conf.oninput=()=>{
@@ -2190,8 +2392,8 @@ setSaveDirectory(null);
 updateTaskUI();
 resizeCanvas();refreshAll();
 setModelState("idle","Select a local or repository .tflite model.");
-status("Ready · Build 2026-10-16b. Choose Detection or Segmentation, then open a working folder.");
-void refreshRepoModelSelector();
+status("Ready · Build 2026-10-16c. Choose Detection or Segmentation, then open a working folder.");
+renderRepoModelOptions();
 </script>
 </body>
 </html>
