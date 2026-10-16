@@ -202,14 +202,29 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 
       <div class="section">
         <h3>YOLO prediction · LiteRT</h3>
-        <input id="modelInput" type="file" accept=".tflite" style="width:100%">
-        <div id="modelFileName" class="small" style="margin:7px 0">
+
+        <div id="modelFileName" class="small" style="margin:0 0 9px">
           No model selected.
         </div>
-        <button id="loadModelBtn" style="width:100%;margin-bottom:7px" disabled>Load / retry model</button>
-        <div class="small" style="margin-bottom:7px">
-          Selecting a .tflite file loads that exact model immediately. The button above can retry the same file if loading fails.
+
+        <label class="small" for="modelInput">Local model</label>
+        <input id="modelInput" type="file" accept=".tflite" style="width:100%;margin-top:4px">
+        <button id="loadModelBtn" style="width:100%;margin-top:6px" disabled>Load Local Model</button>
+        <div class="small" style="margin:6px 0 10px">
+          Choose a local .tflite file, then load it explicitly.
         </div>
+
+        <div style="border-top:1px solid var(--border);padding-top:9px;margin-top:3px">
+          <label class="small" for="repoModelSelect">Repository models · <b id="repoModeLabel">BBOX</b></label>
+          <select id="repoModelSelect" style="width:100%;padding:7px;margin-top:4px" disabled>
+            <option value="">Scanning repository…</option>
+          </select>
+          <button id="loadRepoModelBtn" style="width:100%;margin-top:6px" disabled>Load Repo Model</button>
+          <div id="repoModelHint" class="small" style="margin:6px 0 10px">
+            Models are read from litert_models/BBOX.
+          </div>
+        </div>
+
         <label class="small">Confidence <b id="confVal">0.70</b></label>
         <input id="conf" type="range" min="0.01" max="0.95" step="0.01" value="0.70">
         <label class="small">NMS IoU <b id="iouVal">0.80</b></label>
@@ -293,7 +308,9 @@ const els={
  simplifyTol:$("simplifyTol"),simplifyVal:$("simplifyVal"),
  autoSave:$("autoSave"),showConf:$("showConf"),dedupeBtn:$("dedupeBtn"),deleteAllBtn:$("deleteAllBtn"),
  boxList:$("boxList"),boxCount:$("boxCount"),objectTypeLabel:$("objectTypeLabel"),classesBtn:$("classesBtn"),
- modelInput:$("modelInput"),modelFileName:$("modelFileName"),loadModelBtn:$("loadModelBtn"),conf:$("conf"),confVal:$("confVal"),
+ modelInput:$("modelInput"),modelFileName:$("modelFileName"),loadModelBtn:$("loadModelBtn"),
+ repoModelSelect:$("repoModelSelect"),loadRepoModelBtn:$("loadRepoModelBtn"),repoModeLabel:$("repoModeLabel"),repoModelHint:$("repoModelHint"),
+ conf:$("conf"),confVal:$("confVal"),
  iou:$("iou"),iouVal:$("iouVal"),runYoloBtn:$("runYoloBtn"),modelStatus:$("modelStatus"),predictionHint:$("predictionHint"),
  backendStat:$("backendStat"),preTime:$("preTime"),inferTime:$("inferTime"),postTime:$("postTime"),runtimeEnv:$("runtimeEnv"),
  counter:$("counter"),progressBar:$("progressBar"),status:$("status"),contextMenu:$("contextMenu"),
@@ -336,8 +353,18 @@ const POLY_DOUBLE_CLICK_MS=420;
 const POLY_DOUBLE_CLICK_PX=12;
 let drag=null,marquee=null,pan=null;
 let fitScale=1,zoom=1,offsetX=0,offsetY=0;
+const REPO_OWNER="AVAWLeoben";
+const REPO_NAME="CV-Waste-Web";
+const REPO_MODEL_ROOT="litert_models";
+
+let localModelFile=null;
 let currentModelFile=null;
 let currentModel=null;
+let currentModelSource=null; // local | repo
+let currentModelDisplayName="";
+let currentRepoModelTask=null; // detect | segment when a repo model is active
+let repoModels={detect:null,segment:null};
+let repoScanSerial=0;
 let modelLoadState="idle";
 let YOLO=null;
 let runtimeLoadPromise=null;
@@ -351,6 +378,15 @@ function labelKey(name){return stem(name).normalize("NFC").toLocaleLowerCase()}
 function ext(name){const m=name.toLowerCase().match(/\.[^.]+$/);return m?m[0]:""}
 function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
 function rec(){return current>=0&&current<records.length?records[current]:null}
+function modelDisplayName(name){
+  return stem(name||"model").replace(/^yolo/i,"YOLO");
+}
+function repoFolderForMode(mode=projectMode){
+  return mode==="segment"?"SEGMENTATION":"BBOX";
+}
+function modelSourceText(){
+  return currentModelSource==="repo"?"Repo":currentModelSource==="local"?"Local":"";
+}
 function hex(rgb){return "#"+rgb.map(v=>Math.round(clamp(v,0,255)).toString(16).padStart(2,"0")).join("")}
 function hsvColor(i,n){
   const h=(i/Math.max(1,n))*360,s=.72,v=.95,c=v*s,x=c*(1-Math.abs((h/60)%2-1)),m=v-c;
@@ -450,7 +486,20 @@ function setProjectMode(next,{force=false,silent=false}={}){
   cancelDraftPolygon(false);
   projectMode=next;
   selected=null;selectedVertex=null;multi.clear();undoStack=[];mode="select";
+
+  if(currentModelSource==="repo"&&currentRepoModelTask&&currentRepoModelTask!==projectMode){
+    currentModel=null;
+    currentModelFile=null;
+    currentModelSource=null;
+    currentModelDisplayName="";
+    currentRepoModelTask=null;
+    els.backendStat.textContent="—";
+    els.modelFileName.textContent="No model selected.";
+    setModelState("idle","Repository model cleared because the annotation mode changed.");
+  }
+
   updateTaskUI();savePrefs();refreshAll();
+  void refreshRepoModelSelector();
   if(!silent)status(`Annotation task: ${projectMode==="detect"?"Detection / BBOX":"Segmentation / Polygon"}.`);
   return true;
 }
@@ -1625,6 +1674,12 @@ function hideLoading(){
   }
 }
 
+function updateModelButtons(){
+  const busy=modelLoadState==="loading";
+  els.loadModelBtn.disabled=!localModelFile||busy;
+  els.loadRepoModelBtn.disabled=!els.repoModelSelect?.value||busy;
+}
+
 function setModelState(state,message){
   modelLoadState=state;
   const prefix={
@@ -1636,7 +1691,85 @@ function setModelState(state,message){
   }[state]||state.toUpperCase();
 
   els.modelStatus.textContent=`${prefix} · ${message||""}`;
-  els.loadModelBtn.disabled=!currentModelFile || state==="loading";
+  updateModelButtons();
+}
+
+function renderRepoModelOptions(){
+  if(!els.repoModelSelect)return;
+  const mode=projectMode;
+  const folder=repoFolderForMode(mode);
+  const models=repoModels[mode];
+
+  els.repoModeLabel.textContent=folder;
+  els.repoModelHint.textContent=`Models are read from litert_models/${folder}. Only ${mode==="segment"?"segmentation":"BBOX"} models are listed.`;
+  els.repoModelSelect.innerHTML="";
+
+  if(models===null){
+    const o=document.createElement("option");o.value="";o.textContent="Scanning repository…";els.repoModelSelect.appendChild(o);
+    els.repoModelSelect.disabled=true;
+  }else if(!models.length){
+    const o=document.createElement("option");o.value="";o.textContent="No compatible .tflite models found";els.repoModelSelect.appendChild(o);
+    els.repoModelSelect.disabled=true;
+  }else{
+    for(const m of models){
+      const o=document.createElement("option");
+      o.value=m.downloadUrl;
+      o.dataset.name=m.name;
+      o.dataset.size=String(m.size||0);
+      o.textContent=modelDisplayName(m.name)+(m.size?` · ${(m.size/1024/1024).toFixed(1)} MB`:"");
+      els.repoModelSelect.appendChild(o);
+    }
+    els.repoModelSelect.disabled=false;
+  }
+  updateModelButtons();
+}
+
+async function refreshRepoModelSelector({force=false}={}){
+  if(!els.repoModelSelect)return;
+  const mode=projectMode;
+  const folder=repoFolderForMode(mode);
+
+  if(repoModels[mode]!==null&&!force){
+    renderRepoModelOptions();
+    return;
+  }
+
+  const serial=++repoScanSerial;
+  repoModels[mode]=null;
+  renderRepoModelOptions();
+  showLoading("Scanning repository models…",`litert_models/${folder}`);
+
+  try{
+    const api=`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${REPO_MODEL_ROOT}/${folder}`;
+    const response=await fetch(api,{headers:{Accept:"application/vnd.github+json"}});
+    if(!response.ok)throw new Error(`GitHub returned HTTP ${response.status}`);
+    const items=await response.json();
+    if(!Array.isArray(items))throw new Error("Unexpected GitHub response.");
+
+    let models=items
+      .filter(item=>item?.type==="file"&&String(item.name||"").toLowerCase().endsWith(".tflite"))
+      .filter(item=>mode==="segment"?/seg/i.test(item.name):!/seg/i.test(item.name))
+      .map(item=>({
+        name:item.name,
+        size:Number(item.size)||0,
+        downloadUrl:item.download_url||
+          `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main/${REPO_MODEL_ROOT}/${folder}/${encodeURIComponent(item.name)}`
+      }))
+      .sort((a,b)=>natural(a.name,b.name));
+
+    if(serial!==repoScanSerial||mode!==projectMode)return;
+    repoModels[mode]=models;
+    renderRepoModelOptions();
+    status(`Found ${models.length} ${mode==="segment"?"segmentation":"BBOX"} repo model${models.length===1?"":"s"}.`);
+  }catch(e){
+    if(serial!==repoScanSerial||mode!==projectMode)return;
+    repoModels[mode]=[];
+    renderRepoModelOptions();
+    els.repoModelHint.textContent=`Could not scan litert_models/${folder}: ${e?.message||e}`;
+    status(`Repository model scan failed: ${e?.message||e}`);
+  }finally{
+    if(serial===repoScanSerial)hideLoading();
+  }
 }
 
 async function ensureYoloRuntime(){
@@ -1686,19 +1819,20 @@ async function loadCurrentModel(){
   if(!currentModelFile){
     currentModel=null;
     els.backendStat.textContent="—";
-    setModelState("idle","Select one .tflite file.");
+    setModelState("idle","Select a local or repository .tflite model.");
     return null;
   }
 
   currentModel=null;
-  setModelState("loading",currentModelFile.name);
-  showLoading("Loading LiteRT model…",`${currentModelFile.name}\nPreparing LiteRT.js backend`);
+  const display=currentModelDisplayName||modelDisplayName(currentModelFile.name);
+  const source=modelSourceText()||"Model";
+  setModelState("loading",`${display} from ${source}`);
+  showLoading("Loading LiteRT model…",`${display} · ${source}\nPreparing LiteRT.js backend`);
 
   try{
     const Runtime=await ensureYoloRuntime();
 
-    // Use the official browser API exactly as documented:
-    // the .tflite bytes select the LiteRT.js backend automatically.
+    // The .tflite bytes select the LiteRT.js backend automatically.
     const model=await Runtime.load(currentModelFile);
 
     if(!model || typeof model.predict!=="function"){
@@ -1709,17 +1843,19 @@ async function loadCurrentModel(){
     els.backendStat.textContent=model.device||"unknown";
     syncClassesFromModel(model);
 
+    els.modelFileName.textContent=`${display} loaded from ${source}`;
     setModelState(
       "ready",
-      `${currentModelFile.name} · LiteRT.js · ${model.task?`task: ${model.task} · `:""}backend: ${model.device||"unknown"}`
+      `${display} · ${source} · LiteRT.js · ${model.task?`task: ${model.task} · `:""}backend: ${model.device||"unknown"}`
     );
-    status(`Model READY: ${currentModelFile.name} (${model.device||"unknown"}).`);
+    status(`Model READY: ${display} loaded from ${source} (${model.device||"unknown"}).`);
     return model;
   }catch(e){
     currentModel=null;
     els.backendStat.textContent="error";
     const detail=e?.stack||e?.message||String(e);
-    setModelState("error",`${currentModelFile.name} · ${e?.message||e}`);
+    els.modelFileName.textContent=`${display} failed to load from ${source}`;
+    setModelState("error",`${display} · ${e?.message||e}`);
     status(`LiteRT model load failed: ${detail}`);
     console.error("LiteRT model load failed:",e);
     throw e;
@@ -1727,47 +1863,86 @@ async function loadCurrentModel(){
     hideLoading();
   }
 }
-els.modelInput.onchange=async()=>{
+
+els.modelInput.onchange=()=>{
   const file=els.modelInput.files?.[0]||null;
-  currentModel=null;
-  currentModelFile=null;
+  localModelFile=null;
+
+  if(!file){
+    updateModelButtons();
+    return;
+  }
+
+  if(ext(file.name)!==".tflite"){
+    setModelState("error","Selected local file is not a .tflite model.");
+    return;
+  }
+
+  localModelFile=file;
+  setModelState("selected",`${modelDisplayName(file.name)} selected locally. Click Load Local Model.`);
+  updateModelButtons();
+};
+
+els.loadModelBtn.onclick=async()=>{
+  if(!localModelFile)return;
+
+  currentModelFile=localModelFile;
+  currentModelSource="local";
+  currentModelDisplayName=modelDisplayName(localModelFile.name);
+  currentRepoModelTask=null;
   els.backendStat.textContent="—";
   els.preTime.textContent="—";
   els.inferTime.textContent="—";
   els.postTime.textContent="—";
 
-  if(!file){
-    els.modelFileName.textContent="No model selected.";
-    setModelState("idle","No LiteRT model loaded.");
-    return;
-  }
-
-  els.modelFileName.textContent=`Selected: ${file.name} · ${(file.size/1024/1024).toFixed(1)} MB`;
-
-  if(ext(file.name)!==".tflite"){
-    setModelState("error","Selected file is not a .tflite model.");
-    return;
-  }
-
-  currentModelFile=file;
-  setModelState("selected",file.name);
-
-  // Give the UI one frame to visibly show SELECTED before asynchronous loading.
-  await new Promise(requestAnimationFrame);
-
-  try{
-    await loadCurrentModel();
-  }catch{
-    // Full error is already visible in Model status and the footer.
-  }
-};
-
-els.loadModelBtn.onclick=async()=>{
-  if(!currentModelFile)return;
   try{
     await loadCurrentModel();
   }catch{}
 };
+
+els.repoModelSelect.onchange=()=>updateModelButtons();
+
+els.loadRepoModelBtn.onclick=async()=>{
+  const option=els.repoModelSelect.selectedOptions?.[0];
+  const url=option?.value;
+  const name=option?.dataset?.name;
+  if(!url||!name)return;
+
+  const modeAtStart=projectMode;
+  const display=modelDisplayName(name);
+  setModelState("loading",`Downloading ${display} from Repo`);
+  showLoading("Downloading repository model…",`${display} · litert_models/${repoFolderForMode(modeAtStart)}`);
+
+  try{
+    const response=await fetch(url);
+    if(!response.ok)throw new Error(`Model download returned HTTP ${response.status}`);
+    const blob=await response.blob();
+
+    if(modeAtStart!==projectMode){
+      throw new Error("Annotation mode changed during model download. Select a model again.");
+    }
+
+    currentModelFile=new File([blob],name,{type:"application/octet-stream"});
+    currentModelSource="repo";
+    currentModelDisplayName=display;
+    currentRepoModelTask=modeAtStart;
+    els.backendStat.textContent="—";
+    els.preTime.textContent="—";
+    els.inferTime.textContent="—";
+    els.postTime.textContent="—";
+
+    await loadCurrentModel();
+  }catch(e){
+    hideLoading();
+    if(currentModelSource!=="repo"||currentModelDisplayName!==display){
+      els.modelFileName.textContent="No model selected.";
+    }
+    setModelState("error",`${display} · ${e?.message||e}`);
+    status(`Repository model load failed: ${e?.message||e}`);
+    console.error("Repository model load failed:",e);
+  }
+};
+
 els.conf.oninput=()=>{
   els.confVal.textContent=(+els.conf.value).toFixed(2);
   savePrefs();
@@ -2004,8 +2179,9 @@ els.simplifyVal.textContent=String(+els.simplifyTol.value);
 setSaveDirectory(null);
 updateTaskUI();
 resizeCanvas();refreshAll();
-setModelState("idle","Select one .tflite file.");
+setModelState("idle","Select a local or repository .tflite model.");
 status("Ready · Build 2026-10-16a. Choose Detection or Segmentation, then open a working folder.");
+void refreshRepoModelSelector();
 </script>
 </body>
 </html>
