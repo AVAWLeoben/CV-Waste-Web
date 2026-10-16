@@ -1601,24 +1601,40 @@ function drawAnnotationsToContext(x,r,s,ox,oy,interactive){
   else drawPolygonsToContext(x,r,s,ox,oy,interactive);
 }
 function drawAnnotationLabel(x,label,X,Y,color){
-  // Size the label background from the complete rendered string.  Use the
-  // current font size for height rather than glyph bounds: browser glyph
-  // metrics can be very tight and made the black strip look undersized.
+  // Canvas textAlign is stateful. The empty-canvas message uses "center",
+  // so force left alignment here; otherwise the class prefix can render
+  // outside a background rectangle that starts at X.
   x.save();
+  x.textAlign="left";
+  x.textBaseline="alphabetic";
+
   const metrics=x.measureText(label);
   const fontMatch=String(x.font||"").match(/([0-9]+(?:\.[0-9]+)?)px/);
   const fontPx=fontMatch?Number(fontMatch[1]):13;
-  const padX=6,padY=3;
-  const barW=Math.ceil(metrics.width)+padX*2;
-  const barH=Math.ceil(fontPx+padY*2+2);
-  // Prefer the usual position above the annotation, but keep the label
-  // visible when the annotation touches the top of the canvas.
+  const ascent=Number.isFinite(metrics.actualBoundingBoxAscent)
+    ? metrics.actualBoundingBoxAscent : fontPx*0.78;
+  const descent=Number.isFinite(metrics.actualBoundingBoxDescent)
+    ? metrics.actualBoundingBoxDescent : fontPx*0.22;
+  const left=Number.isFinite(metrics.actualBoundingBoxLeft)
+    ? metrics.actualBoundingBoxLeft : 0;
+  const right=Number.isFinite(metrics.actualBoundingBoxRight)
+    ? metrics.actualBoundingBoxRight : metrics.width;
+
+  // Keep the bar tight to the glyphs: only 2 px horizontal and 1 px vertical
+  // padding. Shift the text origin by its left bearing so every character,
+  // including the "0:" class prefix, stays inside the black strip.
+  const padX=2,padY=1;
+  const glyphW=Math.max(metrics.width,left+right);
+  const barW=Math.ceil(glyphW+padX*2);
+  const barH=Math.max(1,Math.ceil(ascent+descent+padY*2));
   const barY=Y-barH>=0?Y-barH:Y;
+  const textX=X+padX+left;
+  const baselineY=barY+padY+ascent;
+
   x.fillStyle="rgba(0,0,0,.78)";
   x.fillRect(X,barY,barW,barH);
   x.fillStyle=color;
-  x.textBaseline="middle";
-  x.fillText(label,X+padX,barY+barH/2);
+  x.fillText(label,textX,baselineY);
   x.restore();
 }
 function drawBoxesToContext(x,r,s,ox,oy,interactive){
