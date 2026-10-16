@@ -95,7 +95,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 <body>
 <div class="app">
   <div class="topbar">
-    <div class="brand">AVAW Annotator · LiteRT <span class="badge">Build 2026-10-16d</span></div>
+    <div class="brand">AVAW Annotator · LiteRT <span class="badge">Build 2026-10-16e</span></div>
     <label class="small" for="taskMode">Task</label>
     <select id="taskMode" title="Annotation format for the current dataset">
       <option value="detect">Detection · BBOX</option>
@@ -1459,8 +1459,7 @@ function scheduleGammaRender(r=rec()){
     requestDraw();
     return;
   }
-  // Keep the previously rendered gamma image visible while the new value is computed.
-  // Redrawing here would briefly fall back to the original bitmap and cause flashing.
+  requestDraw();
   gammaRenderTimer=setTimeout(()=>{
     gammaRenderTimer=null;
     rebuildGammaCache(r,token);
@@ -1468,9 +1467,7 @@ function scheduleGammaRender(r=rec()){
 }
 function currentImageViewSource(r){
   if(Math.abs(viewGamma-1)<1e-6)return r.bitmap;
-  // While a new gamma value is being calculated, keep showing the last processed
-  // gamma canvas instead of flashing back to the unprocessed source image.
-  if(r.viewGammaCanvas)return r.viewGammaCanvas;
+  if(r.viewGammaCanvas&&Math.abs(Number(r.viewGammaValue)-viewGamma)<1e-6)return r.viewGammaCanvas;
   return r.bitmap;
 }
 els.brightness.oninput=()=>{
@@ -1603,6 +1600,22 @@ function drawAnnotationsToContext(x,r,s,ox,oy,interactive){
   if(projectMode==="detect")drawBoxesToContext(x,r,s,ox,oy,interactive);
   else drawPolygonsToContext(x,r,s,ox,oy,interactive);
 }
+function drawAnnotationLabel(x,label,X,Y,color){
+  const metrics=x.measureText(label);
+  const textWidth=Math.max(
+    metrics.width||0,
+    (metrics.actualBoundingBoxLeft||0)+(metrics.actualBoundingBoxRight||0)
+  );
+  const padX=9,padY=3;
+  const textHeight=Math.max(12,(metrics.actualBoundingBoxAscent||10)+(metrics.actualBoundingBoxDescent||3));
+  const barW=Math.ceil(textWidth)+padX*2;
+  const barH=Math.ceil(textHeight)+padY*2;
+  const barY=Y-barH;
+  x.fillStyle="rgba(0,0,0,.70)";
+  x.fillRect(X,barY,barW,barH);
+  x.fillStyle=color;
+  x.fillText(label,X+padX,barY+padY);
+}
 function drawBoxesToContext(x,r,s,ox,oy,interactive){
   x.save();x.font=`${Math.max(12,13*(interactive?1:Math.max(1,r.width/900)))}px system-ui`;x.textBaseline="top";
   r.annotations.forEach((a,i)=>{
@@ -1612,9 +1625,7 @@ function drawBoxesToContext(x,r,s,ox,oy,interactive){
     x.lineWidth=isSel?3:2;x.strokeRect(X,Y,W,H);
     const name=classNames[cl]??`Class ${cl}`,cf=r.confidences[i];
     let lab=`${cl}: ${name}`;if(els.showConf.checked&&cf!==null&&cf!==undefined)lab+=` ${typeof cf==="number"?cf.toFixed(2):cf}`;
-    const tw=x.measureText(lab).width,padX=6,padY=3,th=18;
-    x.fillStyle="rgba(0,0,0,.70)";x.fillRect(X,Y-th,Math.ceil(tw)+padX*2,th);
-    x.fillStyle=color;x.fillText(lab,X+padX,Y-th+padY);
+    drawAnnotationLabel(x,lab,X,Y,color);
     if(interactive&&i===selected){
       // Keep resize handles a constant on-screen size, independent of image dimensions/zoom.
       const hs=10;for(const [cx,cy] of [[X,Y],[X+W,Y],[X,Y+H],[X+W,Y+H]]){x.fillStyle="#facc15";x.fillRect(cx-hs/2,cy-hs/2,hs,hs)}
@@ -1636,8 +1647,7 @@ function drawPolygonsToContext(x,r,s,ox,oy,interactive){
     const p0=pts[0],X=ox+p0.x*s,Y=oy+p0.y*s;
     const name=classNames[cl]??`Class ${cl}`,cf=r.confidences[i];
     let lab=`${cl}: ${name}`;if(els.showConf.checked&&cf!==null&&cf!==undefined)lab+=` ${typeof cf==="number"?cf.toFixed(2):cf}`;
-    const tw=x.measureText(lab).width,padX=6,padY=3,th=18;
-    x.fillStyle="rgba(0,0,0,.70)";x.fillRect(X,Y-th,Math.ceil(tw)+padX*2,th);x.fillStyle=color;x.fillText(lab,X+padX,Y-th+padY);
+    drawAnnotationLabel(x,lab,X,Y,color);
 
     if(interactive&&i===selected){
       pts.forEach((p,j)=>{
@@ -2668,7 +2678,7 @@ setSaveDirectory(null);
 updateTaskUI();
 resizeCanvas();refreshAll();
 setModelState("idle","Select a local or repository .tflite model.");
-status("Ready · Build 2026-10-16d. Choose Detection or Segmentation, then open a working folder.");
+status("Ready · Build 2026-10-16e. Choose Detection or Segmentation, then open a working folder.");
 renderRepoModelOptions();
 </script>
 </body>
