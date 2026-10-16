@@ -277,13 +277,25 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
     <b>Ctrl+click</b> = multi-select · drag empty space = marquee select · <b>Ctrl+A</b> = select all<br>
     <b>Ctrl+C / Ctrl+V</b> = copy/paste · <b>Delete</b> = delete object(s) · <b>S</b> = save<br>
     <b>Q/A / E/D / ←/→</b> = previous/next image<br>
-    <b>Y</b> = run LiteRT YOLO · <b>Alt+click</b> = add best prediction containing the point<br><br>
+    <b>Y</b> = run LiteRT YOLO · <b>Alt/AltGr+click</b> = add best prediction containing the point<br><br>
     <b>Detection:</b> <b>N</b> = new box, then drag · drag yellow corner handles = resize<br>
     <b>Segmentation:</b> choose <b>Click vertices</b> or <b>Freehand drag</b> · <b>N</b> = new polygon<br>
     Click mode: place vertices, <b>Enter</b>/double-click = finish · Drag mode: hold and draw, release = finish · <b>Esc</b> = cancel<br>
     Click a polygon vertex to select/drag it · <b>Insert/I</b> = insert vertex · <b>Backspace</b> = delete selected vertex.
   </div>
   <div class="row" style="justify-content:flex-end;margin-top:12px"><button id="closeHelpBtn">Close</button></div>
+</dialog>
+
+<dialog id="sessionRestoreDialog">
+  <h3>Restore session folders</h3>
+  <div id="sessionRestoreText" class="small" style="line-height:1.6;margin-bottom:10px"></div>
+  <div class="row" style="flex-wrap:wrap">
+    <button id="sessionWorkingBtn" class="primary">Reconnect Working Folder</button>
+    <button id="sessionLabelsBtn" class="hidden">Reconnect Labels Folder</button>
+  </div>
+  <div class="row" style="justify-content:flex-end;margin-top:12px">
+    <button id="closeSessionRestoreBtn">Continue without reconnecting</button>
+  </div>
 </dialog>
 
 <script type="module">
@@ -303,6 +315,8 @@ const els={
  saveFolderBtn:$("saveFolderBtn"),saveFolderLabel:$("saveFolderLabel"),
  saveBtn:$("saveBtn"),saveAnnotatedBtn:$("saveAnnotatedBtn"),
  saveSessionBtn:$("saveSessionBtn"),loadSessionBtn:$("loadSessionBtn"),sessionFileInput:$("sessionFileInput"),
+ sessionRestoreDialog:$("sessionRestoreDialog"),sessionRestoreText:$("sessionRestoreText"),sessionWorkingBtn:$("sessionWorkingBtn"),
+ sessionLabelsBtn:$("sessionLabelsBtn"),closeSessionRestoreBtn:$("closeSessionRestoreBtn"),
  undoBtn:$("undoBtn"),helpBtn:$("helpBtn"),
  imageList:$("imageList"),prevBtn:$("prevBtn"),nextBtn:$("nextBtn"),jumpInput:$("jumpInput"),
  classSelect:$("classSelect"),annotationHeading:$("annotationHeading"),addBoxBtn:$("addBoxBtn"),deleteBtn:$("deleteBtn"),copyBtn:$("copyBtn"),pasteBtn:$("pasteBtn"),
@@ -1071,6 +1085,100 @@ function describeSessionReconnect(cfg){
   if(pendingLocalModelName)parts.push(`reselect local model “${pendingLocalModelName}”`);
   return parts.join("; ");
 }
+function updateSessionRestoreDialog(){
+  const cfg=pendingSessionRestore;
+  if(!cfg||!els.sessionRestoreDialog)return;
+  const working=cfg?.folders?.working?.name||"the saved working folder";
+  const labels=cfg?.folders?.labels;
+  const needLabels=!!(labels?.name&&!labels.sameAsWorking);
+  const currentWorking=directoryHandle?.name||null;
+  const currentLabels=labelsDirectoryHandle?.name||null;
+  const workingReady=!!(currentWorking&&(!cfg?.folders?.working?.name||currentWorking===cfg.folders.working.name)&&records.length);
+  const labelsReady=!needLabels||!!(currentLabels&&currentLabels===labels.name);
+
+  const lines=[];
+  if(!workingReady)lines.push(`Select working folder “${working}” to reload its images and restore the saved image position.`);
+  else lines.push(`Working folder “${currentWorking}” is connected and images are loaded.`);
+  if(needLabels){
+    if(!labelsReady)lines.push(`Then reconnect labels folder “${labels.name}”.`);
+    else lines.push(`Labels folder “${labels.name}” is connected.`);
+  }
+  lines.push("Browsers do not allow a JSON file to reopen local folders without your permission.");
+  els.sessionRestoreText.textContent=lines.join(" ");
+  els.sessionWorkingBtn.classList.toggle("hidden",workingReady);
+  els.sessionLabelsBtn.classList.toggle("hidden",!needLabels||!workingReady||labelsReady);
+  els.sessionLabelsBtn.textContent=needLabels?`Reconnect Labels Folder · ${labels.name}`:"Reconnect Labels Folder";
+
+  if(workingReady&&labelsReady&&els.sessionRestoreDialog.open){
+    els.sessionRestoreDialog.close();
+  }
+}
+function showSessionRestoreDialog(){
+  if(!pendingSessionRestore?.folders?.working?.name||!els.sessionRestoreDialog)return;
+  updateSessionRestoreDialog();
+  if(!els.sessionRestoreDialog.open)els.sessionRestoreDialog.showModal();
+}
+async function reconnectSessionWorkingFolder(){
+  const cfg=pendingSessionRestore;
+  if(!cfg)return false;
+  if(!window.showDirectoryPicker){status("Folder reconnection requires a Chromium-based browser with directory access.");return false}
+  try{
+    const expected=cfg?.folders?.working?.name||"";
+    const handle=await showDirectoryPicker({mode:"readwrite",id:"avaw-session-working"});
+    if(expected&&handle.name!==expected){
+      const ok=confirm(`This session expects working folder “${expected}”, but you selected “${handle.name}”. Load it anyway?`);
+      if(!ok)return false;
+    }
+    directoryHandle=handle;
+    labelsDirectoryHandle=handle;
+    setLabelsSourceLabel(handle.name);
+    setSaveDirectory(handle);
+    showLoading("Restoring session images…",handle.name);
+    const files=await filesFromDirectory(handle);
+    await loadFiles(files,true);
+    updateSessionRestoreDialog();
+    const labels=cfg?.folders?.labels;
+    if(labels?.name&&!labels.sameAsWorking){
+      status(`Session images loaded${restoreSessionImagePosition()?" and saved image restored":""}. Reconnect labels folder “${labels.name}”.`);
+    }else{
+      status(`Session images loaded from ${handle.name}. Saved image position restored when available.`);
+    }
+    return true;
+  }catch(e){
+    hideLoading();
+    if(e.name!=="AbortError")status(`Session folder restore failed: ${e?.message||e}`);
+    return false;
+  }
+}
+async function reconnectSessionLabelsFolder(){
+  const cfg=pendingSessionRestore;
+  const expected=cfg?.folders?.labels?.name;
+  if(!cfg||!expected)return false;
+  if(!window.showDirectoryPicker){status("Folder reconnection requires a Chromium-based browser with directory access.");return false}
+  try{
+    const handle=await showDirectoryPicker({mode:"readwrite",id:"avaw-session-labels"});
+    if(handle.name!==expected){
+      const ok=confirm(`This session expects labels folder “${expected}”, but you selected “${handle.name}”. Load it anyway?`);
+      if(!ok)return false;
+    }
+    const files=await labelFilesFromDirectory(handle);
+    const applied=await applyLabelsFiles(files,handle.name);
+    if(!applied)return false;
+    labelsDirectoryHandle=handle;
+    if(cfg?.folders?.annotationOutput?.sameAsWorking===false&&cfg?.folders?.annotationOutput?.name===handle.name)setSaveDirectory(handle);
+    restoreSessionImagePosition();
+    updateSessionRestoreDialog();
+    status(`Session labels folder reconnected: ${handle.name}.`);
+    return true;
+  }catch(e){
+    if(e.name!=="AbortError")status(`Session labels restore failed: ${e?.message||e}`);
+    return false;
+  }
+}
+els.sessionWorkingBtn.onclick=reconnectSessionWorkingFolder;
+els.sessionLabelsBtn.onclick=reconnectSessionLabelsFolder;
+els.closeSessionRestoreBtn.onclick=()=>els.sessionRestoreDialog.close();
+
 async function loadSessionJsonFile(file){
   let cfg;
   try{cfg=JSON.parse(await file.text())}catch(e){throw new Error(`Invalid JSON: ${e.message}`)}
@@ -1095,9 +1203,18 @@ async function loadSessionJsonFile(file){
     setModelState("idle","Reselect the local .tflite file, then click Load Local Model.");
   }
 
-  if(directoryHandle&&cfg?.folders?.working?.name===directoryHandle.name)restoreSessionImagePosition();
+  const expectedWorking=cfg?.folders?.working?.name||null;
+  const workingReady=!!(expectedWorking&&directoryHandle?.name===expectedWorking&&records.length);
+  if(workingReady)restoreSessionImagePosition();
+
   const reconnect=describeSessionReconnect(cfg);
-  status(reconnect?`Session loaded · ${reconnect}.`:`Session loaded and settings restored.`);
+  if(expectedWorking&&!workingReady){
+    status(`Session settings loaded. Reconnect working folder “${expectedWorking}” to load the saved images.`);
+    showSessionRestoreDialog();
+  }else{
+    updateSessionRestoreDialog();
+    status(reconnect?`Session loaded · ${reconnect}.`:`Session loaded and settings restored.`);
+  }
   return true;
 }
 
@@ -1582,6 +1699,10 @@ function deleteContainedPolygons(showStatus=true){
 }
 els.containedBtn.onclick=()=>deleteContainedPolygons(true);
 
+function hasSingleClickPredictionModifier(ev){
+  return !!(ev.altKey || (typeof ev.getModifierState==="function"&&ev.getModifierState("AltGraph")) || (ev.ctrlKey&&ev.altKey));
+}
+
 els.canvas.onpointerdown=async ev=>{
   els.canvas.focus({preventScroll:true});
   const r=rec();if(!r)return;
@@ -1589,7 +1710,7 @@ els.canvas.onpointerdown=async ev=>{
   const p=canvasPoint(ev),ip=imagePointFromCanvas(p.x,p.y);
   if(ev.button===1){pan={x:p.x,y:p.y,ox:offsetX,oy:offsetY};return}
   if(ev.button!==0)return;
-  if(ev.altKey){await singleClickPrediction(ip.x,ip.y);return}
+  if(hasSingleClickPredictionModifier(ev)){await singleClickPrediction(ip.x,ip.y);return}
 
   if(projectMode==="segment"&&mode==="polyAdd"){
     if(!draftUndoPushed){pushUndo();draftUndoPushed=true}
