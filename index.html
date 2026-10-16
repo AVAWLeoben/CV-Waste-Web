@@ -191,6 +191,18 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
           Display only. Source images, saved annotations, and model inference remain unchanged.
         </div>
       </div>
+
+      <div class="section">
+        <h3>Magnifier</h3>
+        <label class="row small"><input id="magnifierEnabled" type="checkbox" checked> Show cursor magnifier</label>
+        <label class="small">Magnification <b id="magnifierZoomVal">4.0×</b></label>
+        <input id="magnifierZoom" type="range" min="2" max="8" step="0.5" value="4">
+        <label class="small">Magnifier size <b id="magnifierSizeVal">120 px</b></label>
+        <input id="magnifierSize" type="range" min="80" max="220" step="10" value="120">
+        <div class="small" style="margin-top:7px">
+          Display only. The lens follows the cursor and does not alter images or annotations.
+        </div>
+      </div>
       
     </aside>
 
@@ -287,7 +299,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 <dialog id="helpDialog">
   <h3>Browser controls</h3>
   <div class="small" style="line-height:1.7">
-    <b>Shared:</b> mouse wheel = zoom at cursor · middle-drag = pan · <b>0</b> = reset view<br>
+    <b>Shared:</b> mouse wheel = zoom at cursor · middle-drag = pan · <b>0</b> = reset view · cursor magnifier follows the pointer when enabled<br>
     <b>Ctrl+click</b> = multi-select · drag empty space = marquee select · <b>Ctrl+A</b> = select all<br>
     <b>Ctrl+C / Ctrl+V</b> = copy/paste · <b>Delete</b> = delete object(s) · <b>S</b> = save<br>
     <b>Q/A / E/D / ←/→</b> = previous/next image<br>
@@ -341,6 +353,7 @@ const els={
  simplifyTol:$("simplifyTol"),simplifyVal:$("simplifyVal"),
  autoSave:$("autoSave"),showConf:$("showConf"),dedupeBtn:$("dedupeBtn"),deleteAllBtn:$("deleteAllBtn"),
  brightness:$("brightness"),brightnessVal:$("brightnessVal"),contrast:$("contrast"),contrastVal:$("contrastVal"),gamma:$("gamma"),gammaVal:$("gammaVal"),resetImageAdjustBtn:$("resetImageAdjustBtn"),
+ magnifierEnabled:$("magnifierEnabled"),magnifierZoom:$("magnifierZoom"),magnifierZoomVal:$("magnifierZoomVal"),magnifierSize:$("magnifierSize"),magnifierSizeVal:$("magnifierSizeVal"),
  boxList:$("boxList"),boxCount:$("boxCount"),objectTypeLabel:$("objectTypeLabel"),classesBtn:$("classesBtn"),
  modelInput:$("modelInput"),modelFileName:$("modelFileName"),loadModelBtn:$("loadModelBtn"),
  repoModelSelect:$("repoModelSelect"),loadRepoModelBtn:$("loadRepoModelBtn"),repoModeLabel:$("repoModeLabel"),repoModelHint:$("repoModelHint"),
@@ -411,6 +424,12 @@ let redrawPending=false;
 let viewBrightness=0;
 let viewContrast=0;
 let viewGamma=1;
+let magnifierEnabled=true;
+let magnifierZoom=4;
+let magnifierSize=120;
+let magnifierCursor=null;
+const magnifierBuffer=document.createElement("canvas");
+const magnifierBufferCtx=magnifierBuffer.getContext("2d");
 let gammaRenderTimer=null;
 let gammaRenderToken=0;
 let labelsSourceName=null;
@@ -513,7 +532,8 @@ function savePrefs(){
     autoSave:els.autoSave.checked,showConf:els.showConf.checked,
     conf:+els.conf.value,iou:+els.iou.value,simplifyTol:+els.simplifyTol.value,
     polyDrawMode:els.polyDrawMode.value,
-    viewBrightness,viewContrast,viewGamma
+    viewBrightness,viewContrast,viewGamma,
+    magnifierEnabled,magnifierZoom,magnifierSize
   }));
 }
 function loadPrefs(){
@@ -532,6 +552,9 @@ function loadPrefs(){
     if(Number.isFinite(+p.viewBrightness))viewBrightness=clamp(+p.viewBrightness,-80,80);
     if(Number.isFinite(+p.viewContrast))viewContrast=clamp(+p.viewContrast,-80,80);
     if(Number.isFinite(+p.viewGamma))viewGamma=clamp(+p.viewGamma,0.40,2.50);
+    if(typeof p.magnifierEnabled==="boolean")magnifierEnabled=p.magnifierEnabled;
+    if(Number.isFinite(+p.magnifierZoom))magnifierZoom=clamp(+p.magnifierZoom,2,8);
+    if(Number.isFinite(+p.magnifierSize))magnifierSize=clamp(+p.magnifierSize,80,220);
   }catch{regenColors()}
 }
 loadPrefs();
@@ -1076,7 +1099,10 @@ function sessionSnapshot(){
       viewAids:{
         brightness:viewBrightness,
         contrast:viewContrast,
-        gamma:viewGamma
+        gamma:viewGamma,
+        magnifierEnabled,
+        magnifierZoom,
+        magnifierSize
       }
     },
     inference:{
@@ -1147,6 +1173,9 @@ function applySessionSettings(cfg){
   if(Number.isFinite(Number(cfg?.ui?.viewAids?.brightness)))viewBrightness=clamp(Number(cfg.ui.viewAids.brightness),-80,80);
   if(Number.isFinite(Number(cfg?.ui?.viewAids?.contrast)))viewContrast=clamp(Number(cfg.ui.viewAids.contrast),-80,80);
   if(Number.isFinite(Number(cfg?.ui?.viewAids?.gamma)))viewGamma=clamp(Number(cfg.ui.viewAids.gamma),0.40,2.50);
+  if(typeof cfg?.ui?.viewAids?.magnifierEnabled==="boolean")magnifierEnabled=cfg.ui.viewAids.magnifierEnabled;
+  if(Number.isFinite(Number(cfg?.ui?.viewAids?.magnifierZoom)))magnifierZoom=clamp(Number(cfg.ui.viewAids.magnifierZoom),2,8);
+  if(Number.isFinite(Number(cfg?.ui?.viewAids?.magnifierSize)))magnifierSize=clamp(Number(cfg.ui.viewAids.magnifierSize),80,220);
   if(Number.isFinite(Number(cfg?.inference?.confidence)))els.conf.value=clamp(Number(cfg.inference.confidence),0.01,0.95);
   if(Number.isFinite(Number(cfg?.inference?.nmsIoU)))els.iou.value=clamp(Number(cfg.inference.nmsIoU),0.10,0.95);
 
@@ -1500,6 +1529,69 @@ function syncViewAidControls(){
   els.brightnessVal.textContent=signedPercent(viewBrightness);
   els.contrastVal.textContent=signedPercent(viewContrast);
   els.gammaVal.textContent=Number(viewGamma).toFixed(2);
+  els.magnifierEnabled.checked=!!magnifierEnabled;
+  els.magnifierZoom.value=String(magnifierZoom);
+  els.magnifierSize.value=String(magnifierSize);
+  els.magnifierZoomVal.textContent=`${Number(magnifierZoom).toFixed(1)}×`;
+  els.magnifierSizeVal.textContent=`${Math.round(magnifierSize)} px`;
+}
+function drawMagnifier(rect){
+  const r=rec();
+  if(!magnifierEnabled||!magnifierCursor||!r?.bitmap)return;
+  const p=magnifierCursor;
+  const s=fitScale*zoom;
+  const imageLeft=offsetX,imageTop=offsetY,imageRight=offsetX+r.width*s,imageBottom=offsetY+r.height*s;
+  if(p.x<imageLeft||p.x>imageRight||p.y<imageTop||p.y>imageBottom)return;
+
+  const diameter=clamp(Number(magnifierSize)||120,80,220);
+  const mag=clamp(Number(magnifierZoom)||4,2,8);
+  const gap=18;
+  let cx=p.x+gap+diameter/2,cy=p.y+gap+diameter/2;
+  if(cx+diameter/2>rect.width-6)cx=p.x-gap-diameter/2;
+  if(cy+diameter/2>rect.height-6)cy=p.y-gap-diameter/2;
+  cx=clamp(cx,diameter/2+6,Math.max(diameter/2+6,rect.width-diameter/2-6));
+  cy=clamp(cy,diameter/2+6,Math.max(diameter/2+6,rect.height-diameter/2-6));
+
+  const dpr=Math.max(1,devicePixelRatio||1);
+  const bufferSize=Math.max(1,Math.round(diameter*dpr));
+  if(magnifierBuffer.width!==bufferSize||magnifierBuffer.height!==bufferSize){
+    magnifierBuffer.width=bufferSize;magnifierBuffer.height=bufferSize;
+  }
+  magnifierBufferCtx.setTransform(1,0,0,1,0,0);
+  magnifierBufferCtx.clearRect(0,0,bufferSize,bufferSize);
+  magnifierBufferCtx.fillStyle="#050608";
+  magnifierBufferCtx.fillRect(0,0,bufferSize,bufferSize);
+
+  const srcCssSide=diameter/mag;
+  const intendedX=p.x-srcCssSide/2,intendedY=p.y-srcCssSide/2;
+  const srcX0=clamp(intendedX,0,rect.width),srcY0=clamp(intendedY,0,rect.height);
+  const srcX1=clamp(intendedX+srcCssSide,0,rect.width),srcY1=clamp(intendedY+srcCssSide,0,rect.height);
+  const srcW=Math.max(0,srcX1-srcX0),srcH=Math.max(0,srcY1-srcY0);
+  if(srcW>0&&srcH>0){
+    const dx=(srcX0-intendedX)*mag*dpr,dy=(srcY0-intendedY)*mag*dpr;
+    const dw=srcW*mag*dpr,dh=srcH*mag*dpr;
+    magnifierBufferCtx.imageSmoothingEnabled=false;
+    magnifierBufferCtx.drawImage(
+      els.canvas,
+      srcX0*dpr,srcY0*dpr,srcW*dpr,srcH*dpr,
+      dx,dy,dw,dh
+    );
+  }
+
+  ctx.save();
+  ctx.beginPath();ctx.arc(cx,cy,diameter/2,0,Math.PI*2);ctx.clip();
+  ctx.drawImage(magnifierBuffer,cx-diameter/2,cy-diameter/2,diameter,diameter);
+  ctx.restore();
+
+  ctx.save();
+  ctx.beginPath();ctx.arc(cx,cy,diameter/2,0,Math.PI*2);
+  ctx.lineWidth=3;ctx.strokeStyle="rgba(255,255,255,.92)";ctx.stroke();
+  ctx.beginPath();ctx.arc(cx,cy,diameter/2-3,0,Math.PI*2);
+  ctx.lineWidth=1;ctx.strokeStyle="rgba(0,0,0,.9)";ctx.stroke();
+  const cross=8;
+  ctx.strokeStyle="rgba(255,255,255,.9)";ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(cx-cross,cy);ctx.lineTo(cx+cross,cy);ctx.moveTo(cx,cy-cross);ctx.lineTo(cx,cy+cross);ctx.stroke();
+  ctx.restore();
 }
 function clearGammaCache(r){
   if(!r)return;
@@ -1577,6 +1669,20 @@ els.resetImageAdjustBtn.onclick=()=>{
   for(const r of records)clearGammaCache(r);
   savePrefs();requestDraw();
   status("Image appearance reset. View aids do not alter source images or annotations.");
+};
+els.magnifierEnabled.onchange=()=>{
+  magnifierEnabled=!!els.magnifierEnabled.checked;
+  savePrefs();requestDraw();
+};
+els.magnifierZoom.oninput=()=>{
+  magnifierZoom=clamp(Number(els.magnifierZoom.value),2,8);
+  els.magnifierZoomVal.textContent=`${magnifierZoom.toFixed(1)}×`;
+  savePrefs();requestDraw();
+};
+els.magnifierSize.oninput=()=>{
+  magnifierSize=clamp(Number(els.magnifierSize.value),80,220);
+  els.magnifierSizeVal.textContent=`${Math.round(magnifierSize)} px`;
+  savePrefs();requestDraw();
 };
 
 function setPolygonDrawMode(next){
@@ -1679,6 +1785,7 @@ function draw(){
     for(const p of draftPolygon){const q=canvasPointFromImage(p.x,p.y);ctx.beginPath();ctx.arc(q.x,q.y,4,0,Math.PI*2);ctx.fill()}
     ctx.restore();
   }
+  drawMagnifier(rect);
 }
 function drawAnnotationsToContext(x,r,s,ox,oy,interactive){
   if(projectMode==="detect")drawBoxesToContext(x,r,s,ox,oy,interactive);
@@ -2045,6 +2152,8 @@ els.canvas.onpointerdown=async ev=>{
 els.canvas.onpointermove=ev=>{
   const r=rec();if(!r)return;
   const p=canvasPoint(ev),ip=imagePointFromCanvas(p.x,p.y);
+  magnifierCursor={x:p.x,y:p.y};
+  if(magnifierEnabled)requestDraw();
   if(projectMode==="segment"&&mode==="polyAdd"){
     draftCursor=ip;
     if(freehandDrawing&&drag?.type==="polyFreehand"){
@@ -2085,6 +2194,10 @@ els.canvas.onpointermove=ev=>{
     }
   }
   drag.last=ip;markDirty();requestDraw();renderBoxList();
+};
+els.canvas.onpointerleave=()=>{
+  magnifierCursor=null;
+  if(magnifierEnabled)requestDraw();
 };
 els.canvas.onpointerup=ev=>{
   const r=rec();if(!r)return;
