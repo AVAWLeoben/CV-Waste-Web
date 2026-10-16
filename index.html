@@ -95,7 +95,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 <body>
 <div class="app">
   <div class="topbar">
-    <div class="brand">AVAW Annotator · LiteRT <span class="badge">Build 2026-10-16a</span></div>
+    <div class="brand">AVAW Annotator · LiteRT <span class="badge">Build 2026-10-16b</span></div>
     <label class="small" for="taskMode">Task</label>
     <select id="taskMode" title="Annotation format for the current dataset">
       <option value="detect">Detection · BBOX</option>
@@ -360,6 +360,7 @@ const REPO_MODEL_ROOT="litert_models";
 let localModelFile=null;
 let currentModelFile=null;
 let currentModel=null;
+let modelClassNames=[]; // kept separate from dataset classNames
 let currentModelSource=null; // local | repo
 let currentModelDisplayName="";
 let currentRepoModelTask=null; // detect | segment when a repo model is active
@@ -1794,30 +1795,28 @@ async function ensureYoloRuntime(){
   return runtimeLoadPromise;
 }
 
-function syncClassesFromModel(model){
+function modelNamesFromModel(model){
   const names=model?.names;
-  if(!names)return;
+  if(!names)return [];
 
-  let values=[];
-  if(Array.isArray(names)){
-    values=names.map(String);
-  }else if(typeof names==="object"){
-    values=Object.keys(names)
+  if(Array.isArray(names))return names.map(v=>String(v).trim());
+  if(typeof names==="object"){
+    return Object.keys(names)
       .sort((a,b)=>Number(a)-Number(b))
-      .map(k=>String(names[k]));
+      .map(k=>String(names[k]).trim());
   }
+  return [];
+}
 
-  if(values.length){
-    classNames=values;
-    regenColors();
-    updateClassUI();
-    savePrefs();
-  }
+function modelClassesMatchDataset(){
+  if(!modelClassNames.length||modelClassNames.length!==classNames.length)return false;
+  return modelClassNames.every((name,i)=>name.trim()===String(classNames[i]??"").trim());
 }
 
 async function loadCurrentModel(){
   if(!currentModelFile){
     currentModel=null;
+    modelClassNames=[];
     els.backendStat.textContent="—";
     setModelState("idle","Select a local or repository .tflite model.");
     return null;
@@ -1840,8 +1839,8 @@ async function loadCurrentModel(){
     }
 
     currentModel=model;
+    modelClassNames=modelNamesFromModel(model);
     els.backendStat.textContent=model.device||"unknown";
-    syncClassesFromModel(model);
 
     els.modelFileName.textContent=`${display} loaded from ${source}`;
     setModelState(
@@ -1852,6 +1851,7 @@ async function loadCurrentModel(){
     return model;
   }catch(e){
     currentModel=null;
+    modelClassNames=[];
     els.backendStat.textContent="error";
     const detail=e?.stack||e?.message||String(e);
     els.modelFileName.textContent=`${display} failed to load from ${source}`;
@@ -1977,18 +1977,9 @@ async function inferResults(conf=+els.conf.value,iou=+els.iou.value){
   els.backendStat.textContent=model.device||"unknown";
 
   const boxes=Array.isArray(results?.boxes)?results.boxes:[];
-  if(boxes.length){
-    let changed=false;
-    for(const b of boxes){
-      const cls=Number(b.cls);
-      if(Number.isInteger(cls)&&b.name){
-        while(classNames.length<=cls)classNames.push(`Class ${classNames.length}`);
-        if(classNames[cls]!==String(b.name)){classNames[cls]=String(b.name);changed=true}
-      }
-    }
-    if(changed){regenColors();updateClassUI();savePrefs()}
-  }
 
+  // Dataset classes are authoritative. Model classes are retained separately and
+  // are never allowed to overwrite classNames during model load or inference.
   const task=String(results?.task||model?.task||"unknown");
   els.modelStatus.textContent=
     `${currentModelFile.name} · LiteRT.js · ${model.device||"unknown"} · task: ${task} · ${boxes.length} object(s)`;
@@ -2132,11 +2123,20 @@ async function runYolo(append=false){
     }
     hideLoading();
 
+    const classesMatch=modelClassesMatchDataset();
+    if(!classesMatch){
+      // Whole-image inference with a class-mismatched model defaults every
+      // generated annotation to dataset class 0.
+      for(const e of entries)e.ann[0]=0;
+    }
+
     pushUndo();
     if(!append){r.annotations=[];r.confidences=[]}
     for(const e of entries){r.annotations.push(e.ann);r.confidences.push(e.score)}
     selected=null;selectedVertex=null;multi.clear();markDirty();refreshAll();
-    status(`LiteRT YOLO: ${entries.length} ${objectWord(entries.length!==1)} added.`);
+    status(classesMatch
+      ? `LiteRT YOLO: ${entries.length} ${objectWord(entries.length!==1)} added with model-predicted classes.`
+      : `LiteRT YOLO: ${entries.length} ${objectWord(entries.length!==1)} added as dataset class 0 because model and dataset classes differ.`);
   }catch(e){
     try{hideLoading()}catch{}
     const detail=e?.stack||e?.message||String(e);
@@ -2164,8 +2164,18 @@ async function singleClickPrediction(x,y){
     candidates.sort((a,b)=>b.score-a.score);
     if(!candidates.length){status(`No predicted ${objectWord()} contains that point.`);return}
     pushUndo();const e=candidates[0];
+    const classesMatch=modelClassesMatchDataset();
+    if(!classesMatch){
+      // ALT+Click with a class-mismatched model uses the class currently
+      // selected by the annotator rather than the model's class ID.
+      const selectedClass=clamp(Math.trunc(Number(els.classSelect.value)||0),0,Math.max(0,classNames.length-1));
+      e.ann[0]=selectedClass;
+    }
     r.annotations.push(e.ann);r.confidences.push(e.score);selected=r.annotations.length-1;selectedVertex=null;multi.clear();
     markDirty();refreshAll();
+    status(classesMatch
+      ? `ALT+Click: added model-predicted ${objectWord()} class.`
+      : `ALT+Click: added ${objectWord()} as selected dataset class ${e.ann[0]} (${classNames[e.ann[0]]??"unnamed"}).`);
   }catch(e){
     try{hideLoading()}catch{}
     status(`Single-click prediction error: ${e?.stack||e?.message||e}`);
@@ -2180,7 +2190,7 @@ setSaveDirectory(null);
 updateTaskUI();
 resizeCanvas();refreshAll();
 setModelState("idle","Select a local or repository .tflite model.");
-status("Ready · Build 2026-10-16a. Choose Detection or Segmentation, then open a working folder.");
+status("Ready · Build 2026-10-16b. Choose Detection or Segmentation, then open a working folder.");
 void refreshRepoModelSelector();
 </script>
 </body>
