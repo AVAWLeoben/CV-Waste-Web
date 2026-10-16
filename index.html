@@ -1459,7 +1459,8 @@ function scheduleGammaRender(r=rec()){
     requestDraw();
     return;
   }
-  requestDraw();
+  // Keep the previously rendered gamma image visible while the new value is computed.
+  // Redrawing here would briefly fall back to the original bitmap and cause flashing.
   gammaRenderTimer=setTimeout(()=>{
     gammaRenderTimer=null;
     rebuildGammaCache(r,token);
@@ -1467,7 +1468,9 @@ function scheduleGammaRender(r=rec()){
 }
 function currentImageViewSource(r){
   if(Math.abs(viewGamma-1)<1e-6)return r.bitmap;
-  if(r.viewGammaCanvas&&Math.abs(Number(r.viewGammaValue)-viewGamma)<1e-6)return r.viewGammaCanvas;
+  // While a new gamma value is being calculated, keep showing the last processed
+  // gamma canvas instead of flashing back to the unprocessed source image.
+  if(r.viewGammaCanvas)return r.viewGammaCanvas;
   return r.bitmap;
 }
 els.brightness.oninput=()=>{
