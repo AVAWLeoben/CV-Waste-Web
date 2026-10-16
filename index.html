@@ -95,7 +95,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 <body>
 <div class="app">
   <div class="topbar">
-    <div class="brand">AVAW Annotator · LiteRT <span class="badge">Build 2026-10-09g</span></div>
+    <div class="brand">AVAW Annotator · LiteRT <span class="badge">Build 2026-10-16a</span></div>
     <label class="small" for="taskMode">Task</label>
     <select id="taskMode" title="Annotation format for the current dataset">
       <option value="detect">Detection · BBOX</option>
@@ -174,13 +174,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
         <button id="dedupeBtn" style="width:100%">Delete duplicate boxes</button>
         <button id="deleteAllBtn" class="danger" style="width:100%;margin-top:6px">Delete all boxes</button>
       </div>
-
-      <div class="section">
-        <h3>Augmentation</h3>
-        <button id="flipHBtn" style="width:100%">Flip left ↔ right</button>
-        <button id="flipVBtn" style="width:100%;margin-top:6px">Flip up ↕ down</button>
-        <button id="viewportPngBtn" style="width:100%;margin-top:6px">Save viewport PNG</button>
-      </div>
+      
     </aside>
 
     <main class="stageWrap" id="stageWrap">
@@ -298,7 +292,6 @@ const els={
  simplifyBtn:$("simplifyBtn"),simplifyAllBtn:$("simplifyAllBtn"),mergeBtn:$("mergeBtn"),containedBtn:$("containedBtn"),
  simplifyTol:$("simplifyTol"),simplifyVal:$("simplifyVal"),
  autoSave:$("autoSave"),showConf:$("showConf"),dedupeBtn:$("dedupeBtn"),deleteAllBtn:$("deleteAllBtn"),
- flipHBtn:$("flipHBtn"),flipVBtn:$("flipVBtn"),viewportPngBtn:$("viewportPngBtn"),
  boxList:$("boxList"),boxCount:$("boxCount"),objectTypeLabel:$("objectTypeLabel"),classesBtn:$("classesBtn"),
  modelInput:$("modelInput"),modelFileName:$("modelFileName"),loadModelBtn:$("loadModelBtn"),conf:$("conf"),confVal:$("confVal"),
  iou:$("iou"),iouVal:$("iouVal"),runYoloBtn:$("runYoloBtn"),modelStatus:$("modelStatus"),predictionHint:$("predictionHint"),
@@ -884,10 +877,6 @@ async function saveAnnotated(){
   c.toBlob(b=>downloadBlob(b,r.stem+"_annotated.png"),"image/png");
 }
 els.saveAnnotatedBtn.onclick=saveAnnotated;
-els.viewportPngBtn.onclick=()=>{
-  els.canvas.toBlob(b=>downloadBlob(b,(rec()?.stem||"viewport")+"_viewport.png"),"image/png");
-};
-
 function discardUnsavedAnnotations(r){
   if(!r||!r.dirty)return;
   r.annotations=(r.lastSavedAnnotations||[]).map(a=>a.slice());
@@ -1036,27 +1025,6 @@ function setPolygonDrawMode(next){
 }
 els.polyClickModeBtn.onclick=()=>setPolygonDrawMode("click");
 els.polyDragModeBtn.onclick=()=>setPolygonDrawMode("drag");
-
-async function flipImage(horizontal){
-  const r=rec();if(!r)return;pushUndo();
-  const c=document.createElement("canvas");c.width=r.width;c.height=r.height;const x=c.getContext("2d");
-  x.save();if(horizontal){x.translate(r.width,0);x.scale(-1,1)}else{x.translate(0,r.height);x.scale(1,-1)}
-  x.drawImage(r.bitmap,0,0);x.restore();
-  const blob=await new Promise(res=>c.toBlob(res,"image/png"));r.bitmap=await createImageBitmap(blob);
-  if(projectMode==="detect"){
-    r.annotations=r.annotations.map(([cl,x1,y1,x2,y2])=>horizontal
-      ?[cl,r.width-x2,y1,r.width-x1,y2]
-      :[cl,x1,r.height-y2,x2,r.height-y1]);
-  }else{
-    r.annotations=r.annotations.map(a=>{
-      const b=[a[0]];
-      for(let i=1;i<a.length;i+=2)b.push(horizontal?r.width-a[i]:a[i],horizontal?a[i+1]:r.height-a[i+1]);
-      return b;
-    });
-  }
-  r.dirty=true;selected=null;selectedVertex=null;multi.clear();resetView();refreshAll();
-}
-els.flipHBtn.onclick=()=>flipImage(true);els.flipVBtn.onclick=()=>flipImage(false);
 
 function polygonPoints(a){
   const pts=[];for(let i=1;i<a.length;i+=2)pts.push({x:a[i],y:a[i+1]});return pts;
@@ -2037,7 +2005,7 @@ setSaveDirectory(null);
 updateTaskUI();
 resizeCanvas();refreshAll();
 setModelState("idle","Select one .tflite file.");
-status("Ready · Build 2026-10-09g. Choose Detection or Segmentation, then open a working folder.");
+status("Ready · Build 2026-10-16a. Choose Detection or Segmentation, then open a working folder.");
 </script>
 </body>
 </html>
