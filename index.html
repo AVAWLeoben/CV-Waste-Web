@@ -19,6 +19,31 @@ button,select,input[type=text],input[type=number],textarea{
 button{padding:7px 10px;cursor:pointer}button:hover{filter:brightness(1.12)}
 button.primary{background:#075985;border-color:#0ea5e9}
 button.active{background:#854d0e;border-color:#f59e0b}
+/* A compact, deliberate action surface for precision polygon editing. */
+.vertex-insert-tool{margin:8px 0 9px}
+.vertex-insert-btn{
+  display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:9px;
+  border:1px solid #485464;border-radius:9px;
+  background:linear-gradient(115deg,#293341,#222b37);
+  transition:border-color .14s ease,background .14s ease,box-shadow .14s ease
+}
+.vertex-insert-btn:not(:disabled):hover{border-color:#94a3b8;filter:none;background:#303c4a}
+.vertex-insert-btn:disabled{cursor:not-allowed;opacity:.45;filter:none}
+.vertex-insert-btn.is-armed{
+  border-color:#a7b5c7;background:linear-gradient(115deg,#435163,#313d4b);
+  box-shadow:inset 0 0 0 1px rgba(235,242,250,.08),0 0 0 2px rgba(148,163,184,.09)
+}
+.vertex-insert-icon{
+  flex:0 0 30px;width:30px;height:30px;border:1px solid #6b7e94;border-radius:8px;
+  display:grid;place-items:center;background:#1c2632;color:#e2e8f0;
+  font-size:22px;font-weight:500;line-height:1
+}
+.vertex-insert-btn.is-armed .vertex-insert-icon{border-color:#d1d9e4;color:#fff;background:#526175}
+.vertex-insert-copy{min-width:0;display:flex;flex-direction:column;gap:2px}
+.vertex-insert-copy strong{font-size:11.5px;font-weight:700;line-height:1.25}
+.vertex-insert-copy small{font-size:10px;color:#b9c5d5;line-height:1.25}
+.vertex-insert-hint{font-size:10.5px;line-height:1.35;color:var(--muted);margin:5px 2px 0}
+.vertex-insert-hint.ready{color:#cbd5e1}
 button.danger{background:#531b1b;border-color:#7f1d1d}
 input[type=range]{width:100%}
 .app{height:100vh;display:grid;grid-template-rows:auto 1fr auto;min-height:0}
@@ -95,7 +120,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 <body>
 <div class="app">
   <div class="topbar">
-    <div class="brand">AVAW Annotator · LiteRT <span class="badge">Build 2026-10-16h</span></div>
+    <div class="brand">AVAW Annotator · LiteRT <span class="badge">Build 2026-10-20 · Vertex preview</span></div>
     <label class="small" for="taskMode">Task</label>
     <select id="taskMode" title="Annotation format for the current dataset">
       <option value="detect">Detection · BBOX</option>
@@ -161,6 +186,18 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
         <div class="row">
           <button id="deleteVertexBtn" class="grow">Delete vertex</button>
           <button id="simplifyBtn" class="grow">Simplify selected</button>
+        </div>
+        <div class="vertex-insert-tool">
+          <button id="addVertexAtMouseBtn" class="vertex-insert-btn" type="button"
+                  aria-pressed="false" disabled
+                  title="Place a vertex at the cursor on a nearby edge of the selected polygon">
+            <span class="vertex-insert-icon" aria-hidden="true">+</span>
+            <span class="vertex-insert-copy">
+              <strong>Add new vertex at mouse</strong>
+              <small>Live contour preview · click to insert</small>
+            </span>
+          </button>
+          <div id="vertexInsertHint" class="vertex-insert-hint" aria-live="off">Select one polygon to enable.</div>
         </div>
         <label class="small">Simplify tolerance <b id="simplifyVal">2</b> px</label>
         <input id="simplifyTol" type="range" min="0" max="20" step="1" value="2">
@@ -312,7 +349,8 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
     <b>Detection:</b> <b>N</b> = new box, then drag · drag yellow corner handles = resize<br>
     <b>Segmentation:</b> choose <b>Click vertices</b> or <b>Freehand drag</b> · <b>N</b> = new polygon<br>
     Click mode: place vertices, <b>Enter</b>/double-click = finish · Drag mode: hold and draw, release = finish · <b>Esc</b> = cancel<br>
-    Click a polygon vertex to select/drag it · <b>Insert/I</b> = insert vertex · <b>Backspace</b> = delete selected vertex.
+    Click a polygon vertex to select/drag it · <b>Insert/I</b> = add midpoint vertex · <b>Backspace</b> = delete selected vertex.<br>
+    <b>Add new vertex at mouse:</b> select a single polygon, activate the tool, hover close to its outline for a gray preview, then click to insert. <b>Esc</b> = exit tool.
   </div>
   <div class="row" style="justify-content:flex-end;margin-top:12px"><button id="closeHelpBtn">Close</button></div>
 </dialog>
@@ -354,6 +392,7 @@ const els={
  segTools:$("segTools"),polyDrawMode:$("polyDrawMode"),polyDrawHint:$("polyDrawHint"),
  polyClickModeBtn:$("polyClickModeBtn"),polyDragModeBtn:$("polyDragModeBtn"),
  finishPolyBtn:$("finishPolyBtn"),addVertexBtn:$("addVertexBtn"),deleteVertexBtn:$("deleteVertexBtn"),
+  addVertexAtMouseBtn:$("addVertexAtMouseBtn"),vertexInsertHint:$("vertexInsertHint"),
  simplifyBtn:$("simplifyBtn"),simplifyAllBtn:$("simplifyAllBtn"),mergeBtn:$("mergeBtn"),containedBtn:$("containedBtn"),
  simplifyTol:$("simplifyTol"),simplifyVal:$("simplifyVal"),
  autoSave:$("autoSave"),showConf:$("showConf"),dedupeBtn:$("dedupeBtn"),deleteAllBtn:$("deleteAllBtn"),
@@ -394,7 +433,12 @@ let classColors=[];
 let selected=null,multi=new Set(),clipboard=[];
 let selectedVertex=null;
 let undoStack=[];
-let mode="select"; // select | add | polyAdd
+let mode="select"; // select | add | polyAdd | vertexInsert
+// The insertion preview never mutates the annotation until the user clicks.
+let vertexInsertCursor=null;
+let vertexInsertPreview=null;
+const VERTEX_INSERT_PROXIMITY_PX=28;
+const VERTEX_INSERT_MIN_VERTEX_PX=5;
 let draftPolygon=[];
 let draftCursor=null;
 let draftUndoPushed=false;
@@ -580,6 +624,7 @@ function cancelDraftPolygon(removeUndo=true){
   draftCursor=null;
   if(mode==="polyAdd")mode="select";
   els.addBoxBtn.classList.remove("active");
+  syncVertexInsertTool();
   requestDraw();
 }
 function updateTaskUI(){
@@ -590,6 +635,8 @@ function updateTaskUI(){
   els.dedupeBtn.textContent=projectMode==="detect"?"Delete duplicate boxes":"Delete duplicate polygons";
   els.deleteAllBtn.textContent=projectMode==="detect"?"Delete all boxes":"Delete all polygons";
   els.segTools.classList.toggle("hidden",projectMode!=="segment");
+  if(projectMode!=="segment"&&mode==="vertexInsert")mode="select";
+  syncVertexInsertTool();
   els.runYoloBtn.textContent=projectMode==="detect"?"Run YOLO detection":"Run YOLO segmentation";
   els.predictionHint.textContent=projectMode==="detect"
     ?"Alt-click: low-threshold inference and add the best detected box containing that point."
@@ -1503,6 +1550,7 @@ els.classSelect.onchange=()=>{
 
 function toggleAddMode(){
   if(!rec())return;
+  if(mode==="vertexInsert")stopVertexInsertMode();
   if(projectMode==="detect"){
     mode=mode==="add"?"select":"add";
     cancelDraftPolygon(false);
@@ -1521,6 +1569,7 @@ function toggleAddMode(){
       requestDraw();
     }
   }
+  syncVertexInsertTool();
 }
 els.addBoxBtn.onclick=toggleAddMode;
 els.showConf.onchange=()=>{savePrefs();requestDraw()};
@@ -1736,6 +1785,171 @@ function pointSegmentDistance(px,py,ax,ay,bx,by){
   const t=den?clamp((wx*vx+wy*vy)/den,0,1):0;
   return Math.hypot(px-(ax+t*vx),py-(ay+t*vy));
 }
+// Pick the *nearest boundary segment* in screen pixels, never the polygon's interior.
+// This preserves polygon winding/order and also supports the closing last→first edge.
+function vertexInsertionCandidate(canvasX,canvasY){
+  const r=rec();
+  if(projectMode!=="segment"||mode!=="vertexInsert"||!r||selected===null||multi.size)return null;
+  const a=r.annotations[selected];
+  if(!a||a.length<7)return null;
+  const at=imagePointFromCanvas(canvasX,canvasY);
+  const point={x:at.x,y:at.y};
+  const inImage=at.x>=0&&at.y>=0&&at.x<=r.width&&at.y<=r.height;
+  const points=polygonPoints(a);
+  const scale=Math.max(.00001,fitScale*zoom);
+  let bestDistance=Infinity,bestEdge=-1;
+  for(let i=0;i<points.length;i++){
+    const from=points[i],to=points[(i+1)%points.length];
+    const dist=pointSegmentDistance(at.x,at.y,from.x,from.y,to.x,to.y)*scale;
+    if(dist<bestDistance){bestDistance=dist;bestEdge=i}
+  }
+  // Avoid duplicate/tiny edges around the candidate's two neighbours.
+  const first=points[bestEdge],second=points[(bestEdge+1)%points.length];
+  const farEnough=first&&second&&
+    Math.hypot(at.x-first.x,at.y-first.y)*scale>=VERTEX_INSERT_MIN_VERTEX_PX&&
+    Math.hypot(at.x-second.x,at.y-second.y)*scale>=VERTEX_INSERT_MIN_VERTEX_PX;
+  return {
+    polygonIndex:selected,edgeIndex:bestEdge,point,
+    valid:!!(inImage&&bestDistance<=VERTEX_INSERT_PROXIMITY_PX&&farEnough),
+    inRange:!!(inImage&&bestDistance<=VERTEX_INSERT_PROXIMITY_PX),
+    distancePx:bestDistance,farEnough
+  };
+}
+
+function syncVertexInsertTool(){
+  if(!els.addVertexAtMouseBtn||!els.vertexInsertHint)return;
+  const eligible=projectMode==="segment"&&!!rec()&&selected!==null&&multi.size===0&&
+    !!rec()?.annotations[selected];
+  if(!eligible&&mode==="vertexInsert"){
+    mode="select";
+    vertexInsertPreview=null;
+    vertexInsertCursor=null;
+  }
+  const armed=mode==="vertexInsert";
+  els.addVertexAtMouseBtn.disabled=!eligible;
+  els.addVertexAtMouseBtn.classList.toggle("is-armed",armed);
+  els.addVertexAtMouseBtn.setAttribute("aria-pressed",String(armed));
+  els.canvas.style.cursor=armed?"crosshair":"default";
+  let hint;
+  if(!eligible)hint="Select one polygon to enable.";
+  else if(!armed)hint="Keeps the original midpoint vertex tool available.";
+  else if(vertexInsertPreview?.valid)hint="Click to add this vertex · Esc to finish.";
+  else if(vertexInsertPreview?.inRange&&!vertexInsertPreview?.farEnough)hint="Too close to an existing vertex.";
+  else hint="Move within 28 px of the outline · Esc to exit.";
+  if(els.vertexInsertHint.textContent!==hint)els.vertexInsertHint.textContent=hint;
+  els.vertexInsertHint.classList.toggle("ready",armed);
+}
+
+function stopVertexInsertMode(){
+  if(mode!=="vertexInsert")return;
+  mode="select";
+  vertexInsertPreview=null;
+  vertexInsertCursor=null;
+  syncVertexInsertTool();
+  requestDraw();
+}
+
+function toggleVertexInsertMode(){
+  if(mode==="vertexInsert"){
+    stopVertexInsertMode();
+    status("Mouse vertex insertion finished.");
+    return;
+  }
+  if(projectMode!=="segment"||!rec()||selected===null||multi.size){
+    status("Select one segmentation polygon first.");
+    return;
+  }
+  if(mode==="polyAdd")cancelDraftPolygon(true);
+  mode="vertexInsert";
+  vertexInsertCursor=null;
+  vertexInsertPreview=null;
+  els.addBoxBtn.classList.remove("active");
+  syncVertexInsertTool();
+  requestDraw();
+  status("Add vertex at mouse: hover within 28 px of the selected polygon outline, then click. Esc exits.");
+}
+
+function updateVertexInsertPointer(canvasX,canvasY){
+  vertexInsertCursor={x:canvasX,y:canvasY};
+  vertexInsertPreview=vertexInsertionCandidate(canvasX,canvasY);
+  syncVertexInsertTool();
+  requestDraw();
+}
+
+function commitMouseVertex(preview){
+  const r=rec();
+  if(!preview?.valid||!r||mode!=="vertexInsert"||selected!==preview.polygonIndex)return false;
+  const a=r.annotations[selected];
+  if(!a)return false;
+  // Revalidate on click; the geometry/selection may have changed since pointermove.
+  const q=canvasPointFromImage(preview.point.x,preview.point.y);
+  const fresh=vertexInsertionCandidate(q.x,q.y);
+  if(!fresh?.valid)return false;
+  const index=fresh.edgeIndex+1;
+  pushUndo();
+  a.splice(1+index*2,0,fresh.point.x,fresh.point.y);
+  selectedVertex=index;
+  markDirty();
+  renderBoxList();
+  updateVertexInsertPointer(q.x,q.y);
+  status(`Vertex ${index} added to polygon ${selected}. Continue clicking along the boundary, or press Esc to finish.`);
+  return true;
+}
+
+function drawVertexInsertionPreview(rect){
+  if(!vertexInsertCursor||selected===null||!rec())return;
+  const pointer=vertexInsertCursor,preview=vertexInsertPreview;
+  if(!Number.isFinite(pointer.x)||!Number.isFinite(pointer.y)||
+     pointer.x<0||pointer.y<0||pointer.x>rect.width||pointer.y>rect.height)return;
+  ctx.save();
+  if(preview?.valid){
+    const a=rec().annotations[selected];
+    const points=polygonPoints(a);
+    const proposal=[...points];
+    proposal.splice(preview.edgeIndex+1,0,preview.point);
+    // Full proposed polygon shown as a neutral gray, dashed ghost contour.
+    ctx.beginPath();
+    proposal.forEach((pt,i)=>{
+      const p=canvasPointFromImage(pt.x,pt.y);
+      if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y);
+    });
+    ctx.closePath();
+    ctx.lineJoin="round";ctx.lineCap="round";
+    ctx.setLineDash([7,5]);ctx.lineDashOffset=-1;
+    ctx.lineWidth=3.5;ctx.strokeStyle="rgba(15,23,42,.9)";ctx.stroke();
+    ctx.lineWidth=2;ctx.strokeStyle="rgba(222,231,241,.96)";ctx.stroke();
+    ctx.setLineDash([]);
+    // Show exactly which old segment would be replaced by two new segments.
+    const before=points[preview.edgeIndex],after=points[(preview.edgeIndex+1)%points.length];
+    const b=canvasPointFromImage(before.x,before.y),e=canvasPointFromImage(after.x,after.y);
+    ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(pointer.x,pointer.y);ctx.lineTo(e.x,e.y);
+    ctx.lineWidth=2.6;ctx.strokeStyle="rgba(250,251,253,.97)";ctx.stroke();
+  }
+  const valid=!!preview?.valid;
+  // Ghost vertex follows the exact pointer position, even before it is in range.
+  ctx.shadowBlur=valid?12:0;ctx.shadowColor="rgba(238,245,255,.6)";
+  ctx.fillStyle=valid?"rgba(239,244,250,.97)":"rgba(107,118,134,.77)";
+  ctx.strokeStyle=valid?"#18212d":"rgba(229,232,237,.9)";
+  ctx.lineWidth=1.6;
+  ctx.beginPath();ctx.arc(pointer.x,pointer.y,valid?6.5:5,0,Math.PI*2);ctx.fill();ctx.stroke();
+  ctx.shadowBlur=0;
+  if(valid){
+    ctx.beginPath();ctx.moveTo(pointer.x-3,pointer.y);ctx.lineTo(pointer.x+3,pointer.y);
+    ctx.moveTo(pointer.x,pointer.y-3);ctx.lineTo(pointer.x,pointer.y+3);
+    ctx.lineWidth=1.4;ctx.strokeStyle="#1b2632";ctx.stroke();
+    // Compact floating cue; positioned to stay within the image viewport.
+    const cue="+ vertex";
+    ctx.font="600 11px system-ui";ctx.textBaseline="middle";ctx.textAlign="left";
+    const tw=ctx.measureText(cue).width,bw=tw+14,bh=22;
+    const bx=clamp(pointer.x+15,4,Math.max(4,rect.width-bw-4));
+    const by=clamp(pointer.y-32,4,Math.max(4,rect.height-bh-4));
+    ctx.fillStyle="rgba(31,41,55,.94)";ctx.strokeStyle="rgba(180,196,215,.8)";ctx.lineWidth=1;
+    ctx.beginPath();ctx.roundRect(bx,by,bw,bh,6);ctx.fill();ctx.stroke();
+    ctx.fillStyle="#edf2f7";ctx.fillText(cue,bx+7,by+bh/2);
+  }
+  ctx.restore();
+}
+
 function pointInPolygonPoints(x,y,pts){
   let inside=false;
   for(let i=0,j=pts.length-1;i<pts.length;j=i++){
@@ -1792,6 +2006,7 @@ function draw(){
   ctx.drawImage(currentImageViewSource(r),offsetX,offsetY,r.width*s,r.height*s);
   ctx.restore();
   drawAnnotationsToContext(ctx,r,s,offsetX,offsetY,true);
+  if(projectMode==="segment"&&mode==="vertexInsert")drawVertexInsertionPreview(rect);
 
   if(marquee){
     ctx.save();ctx.strokeStyle="#fff";ctx.setLineDash([7,5]);ctx.lineWidth=1.5;
@@ -2027,6 +2242,7 @@ function deleteVertex(){
   pushUndo();a.splice(1+selectedVertex*2,2);selectedVertex=Math.min(selectedVertex,n-2);markDirty();refreshAll();
 }
 els.addVertexBtn.onclick=addVertex;els.deleteVertexBtn.onclick=deleteVertex;
+els.addVertexAtMouseBtn.onclick=toggleVertexInsertMode;
 
 function convexHull(points){
   const pts=points.map(p=>({x:p.x,y:p.y})).sort((a,b)=>a.x-b.x||a.y-b.y);
@@ -2112,6 +2328,17 @@ els.canvas.onpointerdown=async ev=>{
   if(ev.button!==0)return;
   if(hasSingleClickPredictionModifier(ev)){await singleClickPrediction(ip.x,ip.y);return}
 
+  if(projectMode==="segment"&&mode==="vertexInsert"){
+    ev.preventDefault();
+    updateVertexInsertPointer(p.x,p.y);
+    if(!commitMouseVertex(vertexInsertPreview)){
+      status(vertexInsertPreview?.inRange
+        ?"Move away from an existing vertex before clicking to insert."
+        :"Move within 28 px of the selected polygon boundary to insert a vertex.");
+    }
+    return;
+  }
+
   if(projectMode==="segment"&&mode==="polyAdd"){
     if(!draftUndoPushed){pushUndo();draftUndoPushed=true}
     const q={x:clamp(ip.x,0,r.width),y:clamp(ip.y,0,r.height)};
@@ -2179,6 +2406,11 @@ els.canvas.onpointermove=ev=>{
   const p=canvasPoint(ev),ip=imagePointFromCanvas(p.x,p.y);
   magnifierCursor={x:p.x,y:p.y};
   if(magnifierEnabled)requestDraw();
+  if(projectMode==="segment"&&mode==="vertexInsert"){
+    if(pan){offsetX=pan.ox+(p.x-pan.x);offsetY=pan.oy+(p.y-pan.y)}
+    updateVertexInsertPointer(p.x,p.y);
+    return;
+  }
   if(projectMode==="segment"&&mode==="polyAdd"){
     draftCursor=ip;
     if(freehandDrawing&&drag?.type==="polyFreehand"){
@@ -2222,7 +2454,10 @@ els.canvas.onpointermove=ev=>{
 };
 els.canvas.onpointerleave=()=>{
   magnifierCursor=null;
-  if(magnifierEnabled)requestDraw();
+  vertexInsertCursor=null;
+  vertexInsertPreview=null;
+  syncVertexInsertTool();
+  requestDraw();
 };
 els.canvas.onpointerup=ev=>{
   const r=rec();if(!r)return;
@@ -2284,6 +2519,10 @@ function showContext(x,y){
     add(`Delete ${objectWord(true)}`,deleteSelection);
     add(`Copy ${objectWord(true)}`,()=>els.copyBtn.click());
     if(projectMode==="segment"){
+      if(selected!==null&&multi.size===0){
+        add(mode==="vertexInsert"?"Finish mouse vertex insertion":"Add new vertex at mouse",
+          ()=>els.addVertexAtMouseBtn.click());
+      }
       add("Simplify selected",()=>els.simplifyBtn.click());
       if(selectedIndices().length>=2)add("Merge selected",mergeSelectedPolygons);
       if(selected!==null&&selectedVertex!==null){
@@ -2315,6 +2554,7 @@ function hideContext(){els.contextMenu.style.display="none"}
 document.addEventListener("click",e=>{if(!els.contextMenu.contains(e.target))hideContext()});
 
 function renderBoxList(){
+  syncVertexInsertTool();
   const r=rec();els.boxList.innerHTML="";els.boxCount.textContent=r?.annotations.length||0;if(!r)return;
   r.annotations.forEach((a,i)=>{
     const d=document.createElement("div");d.className="item"+(i===selected||multi.has(i)?" selected":"");
@@ -2322,7 +2562,11 @@ function renderBoxList(){
     const t=document.createElement("span");t.className="ellipsis grow";
     t.textContent=`${projectMode==="detect"?"Box":"Polygon"} ${i} · ${classNames[a[0]]??"Class "+a[0]}`;
     d.append(dot,t);
-    d.onclick=()=>{selected=i;selectedVertex=null;multi.clear();els.classSelect.value=a[0];requestDraw();renderBoxList()};
+    d.onclick=()=>{
+      selected=i;selectedVertex=null;multi.clear();els.classSelect.value=a[0];
+      vertexInsertPreview=null;vertexInsertCursor=null;
+      requestDraw();renderBoxList();
+    };
     els.boxList.appendChild(d);
   });
 }
@@ -2349,6 +2593,9 @@ window.addEventListener("keydown",ev=>{
     ev.preventDefault();
     if(projectMode==="segment"&&selected!==null&&selectedVertex!==null)deleteVertex();else deleteSelection();
     return;
+  }
+  if(k==="escape"&&mode==="vertexInsert"){
+    ev.preventDefault();stopVertexInsertMode();status("Mouse vertex insertion finished.");return;
   }
   if(k==="escape"&&projectMode==="segment"&&mode==="polyAdd"){cancelDraftPolygon(true);status("New polygon cancelled.");return}
   if(k==="enter"&&projectMode==="segment"&&mode==="polyAdd"&&els.polyDrawMode.value==="click"){
@@ -2941,7 +3188,7 @@ setSaveDirectory(null);
 updateTaskUI();
 resizeCanvas();refreshAll();
 setModelState("idle","Select a local or repository .tflite model.");
-status("Ready · Build 2026-10-16h. Choose Detection or Segmentation, then open a working folder.");
+status("Ready · Build 2026-10-20. Choose Detection or Segmentation, then open a working folder.");
 renderRepoModelOptions();
 </script>
 </body>
