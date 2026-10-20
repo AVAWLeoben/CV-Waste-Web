@@ -265,7 +265,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
       <option value="detect">Detection · BBOX</option>
       <option value="segment">Segmentation · Polygon</option>
     </select>
-    <button id="openDirBtn" title="Open one working folder, load its images and YOLO .txt annotations, and save annotations back into the same folder">Open Working Folder</button>
+    <button id="openDirBtn" title="Open one working folder, load its PNG/JPEG/TIFF images and YOLO .txt annotations, and save annotations back into the same folder">Open Working Folder</button>
     <button id="labelsFolderBtn" title="Load matching YOLO .txt labels from a separate folder. With direct folder access, this folder also becomes the annotation output folder.">Load Labels Folder</button>
     <input id="labelsFolderInput" class="hidden" type="file" webkitdirectory multiple accept=".txt">
     <span id="labelsFolderLabel" class="small">Labels: image folder</span>
@@ -740,6 +740,8 @@ function natural(a,b){return a.localeCompare(b,undefined,{numeric:true,sensitivi
 function stem(name){return name.replace(/\.[^.]+$/,"")}
 function labelKey(name){return stem(name).normalize("NFC").toLocaleLowerCase()}
 function ext(name){const m=name.toLowerCase().match(/\.[^.]+$/);return m?m[0]:""}
+const IMAGE_FILE_EXTENSIONS=new Set([".png",".jpg",".jpeg",".tif",".tiff"]);
+const TIFF_FILE_EXTENSIONS=new Set([".tif",".tiff"]);
 function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
 function rec(){return current>=0&&current<records.length?records[current]:null}
 function modelDisplayName(name){
@@ -945,7 +947,7 @@ async function filesFromDirectory(handle){
   for await(const [name,h] of handle.entries()){
     if(h.kind==="file"){
       const e=ext(name);
-      if([".png",".jpg",".jpeg",".txt"].includes(e))out.push(await h.getFile());
+      if(IMAGE_FILE_EXTENSIONS.has(e)||e===".txt")out.push(await h.getFile());
     }
   }
   return out;
@@ -1135,6 +1137,56 @@ function countYoloTextAnnotations(text,mode=projectMode){
   return count;
 }
 
+/* RGB/RGBA TIFF: decoding is deferred until an image is actually opened.  The
+   converted ImageBitmap is used everywhere, so annotations, display aids,
+   image export and LiteRT inference all operate in the same pixel space. */
+let tiffDecoderPromise=null;
+function ensureTiffDecoder(){
+  if(globalThis.UTIF && typeof globalThis.UTIF.decode==="function")return Promise.resolve(globalThis.UTIF);
+  if(tiffDecoderPromise)return tiffDecoderPromise;
+  tiffDecoderPromise=new Promise((resolve,reject)=>{
+    const script=document.createElement("script");
+    script.src="https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js";
+    script.async=true;
+    script.onload=()=>{
+      const utif=globalThis.UTIF;
+      if(utif?.decode && utif?.decodeImage && utif?.toRGBA8)resolve(utif);
+      else reject(new Error("UTIF.js loaded without a usable TIFF decoder."));
+    };
+    script.onerror=()=>reject(new Error("Could not download the TIFF decoder (UTIF.js). Check the network connection."));
+    document.head.appendChild(script);
+  }).catch(error=>{
+    tiffDecoderPromise=null; // permit retry if the network was temporarily unavailable
+    throw error;
+  });
+  return tiffDecoderPromise;
+}
+
+async function decodeTiffBitmap(file){
+  const [utif,buffer]=await Promise.all([ensureTiffDecoder(),file.arrayBuffer()]);
+  const ifds=utif.decode(buffer);
+  if(!Array.isArray(ifds)||!ifds.length)throw new Error(`No readable TIFF image found in ${file.name}.`);
+  // First TIFF page is the annotation image. Additional pages are intentionally ignored.
+  const ifd=ifds[0];
+  utif.decodeImage(buffer,ifd);
+  const width=Number(ifd.width),height=Number(ifd.height);
+  if(!Number.isSafeInteger(width)||!Number.isSafeInteger(height)||width<1||height<1){
+    throw new Error(`Invalid TIFF dimensions in ${file.name}.`);
+  }
+  const rgba=utif.toRGBA8(ifd);
+  if(!rgba||rgba.byteLength!==width*height*4){
+    throw new Error(`Unsupported or incomplete RGB/RGBA TIFF pixels in ${file.name}.`);
+  }
+  const canvas=document.createElement("canvas");
+  canvas.width=width;canvas.height=height;
+  const c=canvas.getContext("2d");
+  if(!c)throw new Error("Could not create canvas for TIFF image.");
+  // Copy the decoded RGBA into an ImageData, then release the TIFF decode buffers.
+  const pixels=new Uint8ClampedArray(rgba.buffer,rgba.byteOffset,rgba.byteLength);
+  c.putImageData(new ImageData(pixels,width,height),0,0);
+  return await createImageBitmap(canvas);
+}
+
 async function ensureRecordDecoded(r,{showOverlay=true,immediate=false}={}){
   if(!r||r.bitmap)return true;
 
@@ -1154,7 +1206,9 @@ async function ensureRecordDecoded(r,{showOverlay=true,immediate=false}={}){
   try{
     if(!r.decodePromise){
       r.decodePromise=(async()=>{
-        const bm=await createImageBitmap(r.file);
+        const bm=TIFF_FILE_EXTENSIONS.has(ext(r.file.name))
+          ?await decodeTiffBitmap(r.file)
+          :await createImageBitmap(r.file);
         r.bitmap=bm;
         r.width=bm.width;
         r.height=bm.height;
@@ -1188,8 +1242,8 @@ function prefetchNextImage(idx){
 
 async function loadFiles(files,fromDirectory=false){
   if(!files.length){hideLoading();return}
-  const imageFiles=files.filter(f=>[".png",".jpg",".jpeg"].includes(ext(f.name))).sort((a,b)=>natural(a.name,b.name));
-  if(!imageFiles.length){hideLoading();status("No PNG/JPG/JPEG images found.");return}
+  const imageFiles=files.filter(f=>IMAGE_FILE_EXTENSIONS.has(ext(f.name))).sort((a,b)=>natural(a.name,b.name));
+  if(!imageFiles.length){hideLoading();status("No PNG, JPG, JPEG, TIF or TIFF images found.");return}
 
   showLoading("Loading image folder…",`Preparing ${imageFiles.length} image records`);
   await new Promise(requestAnimationFrame);
