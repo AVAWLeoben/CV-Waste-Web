@@ -160,6 +160,18 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 .welcome-feature strong{display:block;color:#f5f8fc;font-size:clamp(13px,1.2vw,16px);font-weight:530;line-height:1.38}
 .welcome-feature small{display:block;color:#a2b0c1;font-size:clamp(11px,.99vw,13px);line-height:1.4;margin-top:2px}
 .welcome-actions{margin-top:clamp(20px,3.4vh,39px)}
+.welcome-action-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;width:min(100%,550px)}
+.welcome-action-option{min-width:0}
+.welcome-action-option .welcome-cta{width:100%;font-size:clamp(12px,1.05vw,15px);gap:9px;padding-inline:8px}
+.welcome-action-option .welcome-cta svg{width:20px;height:20px;flex-basis:20px}
+.welcome-action-option .welcome-hint{margin:11px 0 0 2px;gap:7px;max-width:none}
+.welcome-action-option .welcome-hint svg{width:29px;height:23px;flex-basis:29px}
+.welcome-action-option .welcome-hint span{font-size:11px}
+.welcome-cta.example-cta{border-color:#5b9dbb;background:linear-gradient(180deg,#235a7c,#17435f)}
+.welcome-cta.example-cta:hover{background:linear-gradient(180deg,#2d7097,#1a5071)}
+.welcome-demo-note{color:#b7cad8;line-height:1.4;font-size:11px}
+.example-indicator{color:#f1d69b;border:1px solid #8d6c31;background:#302817;padding:4px 8px;border-radius:7px;font-size:11px;white-space:nowrap}
+
 .welcome-cta{
   display:flex;align-items:center;justify-content:center;gap:13px;
   width:min(100%,354px);min-height:55px;padding:12px 20px;
@@ -212,6 +224,9 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
   .welcome-feature-icon svg{width:25px;height:25px}
   .welcome-actions{margin-top:20px}
   .welcome-cta{min-height:49px;width:280px}
+  .welcome-action-grid{gap:9px}
+  .welcome-action-option .welcome-cta{min-height:49px;font-size:12px}
+  .welcome-action-option .welcome-hint span{font-size:10px}
   .welcome-credit{margin-top:22px}
 }
 @container (max-width:560px){
@@ -227,6 +242,9 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
   .welcome-features{gap:11px}
   .welcome-credit{margin-top:20px}
   .welcome-hint{margin-left:10px}
+  .welcome-action-grid{grid-template-columns:1fr;max-width:310px;gap:15px}
+  .welcome-action-option .welcome-cta{min-height:47px;font-size:14px}
+  .welcome-action-option .welcome-hint{margin-left:5px}
 }
 @media(max-height:690px) and (min-width:761px){
   .welcome-content{padding-top:20px;padding-bottom:14px}
@@ -265,7 +283,8 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
       <option value="detect">Detection · BBOX</option>
       <option value="segment">Segmentation · Polygon</option>
     </select>
-    <button id="openDirBtn" title="Open one working folder, load its PNG/JPEG/TIFF images and YOLO .txt annotations, and save annotations back into the same folder">Open Working Folder</button>
+    <button id="openDirBtn" title="Open a local folder and save annotations there">Open Working Folder</button>
+    <span id="exampleModeBadge" class="example-indicator hidden" title="Sample images from GitHub. Annotations stay in browser memory until you open a local working folder.">EXAMPLE · RAM ONLY</span>
     <button id="labelsFolderBtn" title="Load matching YOLO .txt labels from a separate folder. With direct folder access, this folder also becomes the annotation output folder.">Load Labels Folder</button>
     <input id="labelsFolderInput" class="hidden" type="file" webkitdirectory multiple accept=".txt">
     <span id="labelsFolderLabel" class="small">Labels: image folder</span>
@@ -306,7 +325,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
           <button id="pasteBtn" class="grow">Paste</button>
         </div>
         <label class="row small"><input id="autoSave" type="checkbox"> Auto save on navigation</label>
-<div class="small">Off: unsaved annotation edits are discarded when leaving the image.</div>
+<div class="small" id="autoSaveHelp">Off: unsaved annotation edits are discarded when leaving the image.</div>
         <label class="row small"><input id="showConf" type="checkbox" checked> Show confidence</label>
       </div>
 
@@ -417,11 +436,22 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
               </div>
             </div>
             <div class="welcome-actions">
-              <button id="welcomeOpenFolderBtn" class="welcome-cta" type="button">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M3 10h18"/></svg>
-                <span>Open Working Folder</span>
-              </button>
-              <div class="welcome-hint" aria-hidden="true"><svg viewBox="0 0 40 30"><path d="M37 27C23 27 19 17 11 4M11 4l0 9m0-9 9 4"/></svg><span>Get started by opening<br>your working folder</span></div>
+              <div class="welcome-action-grid">
+                <div class="welcome-action-option">
+                  <button id="welcomeOpenFolderBtn" class="welcome-cta" type="button">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M3 10h18"/></svg>
+                    <span>Open Working Folder</span>
+                  </button>
+                  <div class="welcome-hint" aria-hidden="true"><svg viewBox="0 0 40 30"><path d="M37 27C23 27 19 17 11 4M11 4l0 9m0-9 9 4"/></svg><span>Get started with<br>your own images</span></div>
+                </div>
+                <div class="welcome-action-option">
+                  <button id="welcomeExampleFolderBtn" class="welcome-cta example-cta" type="button" title="Try images from the CV Waste Web repository. Edits remain in RAM only.">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M3 10h18"/></svg>
+                    <span>Open Example Folder</span>
+                  </button>
+                  <div class="welcome-hint welcome-demo-note" aria-hidden="true"><svg viewBox="0 0 40 30"><path d="M37 27C23 27 19 17 11 4M11 4l0 9m0-9 9 4"/></svg><span>Try repository images<br>without saving to disk</span></div>
+                </div>
+              </div>
               <p class="welcome-session-line">Returning to a project? <button id="welcomeLoadSessionBtn" class="welcome-session" type="button">Load a saved session</button></p>
             </div>
             <div class="welcome-credit">
@@ -563,7 +593,7 @@ const COCO=["person","bicycle","car","motorcycle","airplane","bus","train","truc
 
 const $=id=>document.getElementById(id);
 const els={
- canvas:$("canvas"),stage:$("stageWrap"),welcomeScreen:$("welcomeScreen"),welcomeOpenFolderBtn:$("welcomeOpenFolderBtn"),welcomeLoadSessionBtn:$("welcomeLoadSessionBtn"),taskMode:$("taskMode"),openDirBtn:$("openDirBtn"),
+ canvas:$("canvas"),stage:$("stageWrap"),welcomeScreen:$("welcomeScreen"),welcomeOpenFolderBtn:$("welcomeOpenFolderBtn"),welcomeExampleFolderBtn:$("welcomeExampleFolderBtn"),welcomeLoadSessionBtn:$("welcomeLoadSessionBtn"),exampleModeBadge:$("exampleModeBadge"),autoSaveHelp:$("autoSaveHelp"),taskMode:$("taskMode"),openDirBtn:$("openDirBtn"),
  labelsFolderBtn:$("labelsFolderBtn"),labelsFolderInput:$("labelsFolderInput"),labelsFolderLabel:$("labelsFolderLabel"),
  saveFolderBtn:$("saveFolderBtn"),saveFolderLabel:$("saveFolderLabel"),
  saveBtn:$("saveBtn"),saveAnnotatedBtn:$("saveAnnotatedBtn"),
@@ -610,6 +640,9 @@ let directoryHandle=null;
 let labelsDirectoryHandle=null;
 let saveDirectoryHandle=null;
 let records=[]; // image records; annotations are BBOX or polygon arrays depending on projectMode
+let exampleMode=false;
+let exampleLoading=false;
+let preExampleClasses=null;
 let current=-1;
 let projectMode="detect"; // detect | segment
 let classNames=[...COCO];
@@ -639,6 +672,8 @@ let fitScale=1,zoom=1,offsetX=0,offsetY=0;
 const REPO_OWNER="AVAWLeoben";
 const REPO_NAME="CV-Waste-Web";
 const REPO_MODEL_ROOT="litert_models";
+const EXAMPLE_REPO_FOLDER="images_test_cvwaste_html";
+const EXAMPLE_FALLBACK_FILE="G-RAV.bmp";
 
 let localModelFile=null;
 let currentModelFile=null;
@@ -763,6 +798,7 @@ function hsvColor(i,n){
 function regenColors(){classColors=classNames.map((_,i)=>hsvColor(i,classNames.length))}
 
 function savePrefs(){
+  if(exampleMode)return; // The public demo must not overwrite real-folder preferences.
   localStorage.setItem("avaw_annotator_browser",JSON.stringify({
     classNames,classColors,projectMode,
     autoSave:els.autoSave.checked,showConf:els.showConf.checked,
@@ -917,6 +953,36 @@ els.applyClassesBtn.onclick=()=>{
   savePrefs();updateClassUI();requestDraw();els.classesDialog.close();
 };
 
+function setExampleMode(active){
+  active=!!active;
+  if(active&&!exampleMode){
+    preExampleClasses={names:classNames.slice(),colors:classColors.map(c=>c.slice())};
+  }else if(!active&&exampleMode&&preExampleClasses){
+    classNames=preExampleClasses.names;
+    classColors=preExampleClasses.colors;
+    preExampleClasses=null;
+    updateClassUI();
+  }
+  exampleMode=active;
+  els.exampleModeBadge.classList.toggle("hidden",!exampleMode);
+  els.saveFolderBtn.disabled=exampleMode;
+  els.labelsFolderBtn.disabled=exampleMode;
+  els.labelsFolderInput.disabled=exampleMode;
+  els.saveAnnotatedBtn.disabled=exampleMode;
+  els.saveSessionBtn.disabled=exampleMode;
+  els.autoSave.disabled=exampleMode;
+  els.saveBtn.textContent=exampleMode?"Save to RAM":"Save Annotation";
+  els.saveBtn.title=exampleMode
+    ? "Store the current example annotations in RAM. Nothing is written to your computer or GitHub."
+    : "Save YOLO annotation text to the chosen folder";
+  els.autoSaveHelp.textContent=exampleMode
+    ? "Example mode: edits are kept in browser memory while navigating, even if auto-save is off. They disappear on reload or when you open a real folder."
+    : "Off: unsaved annotation edits are discarded when leaving the image.";
+  els.saveFolderLabel.textContent=exampleMode?"Annotation output: RAM only":
+    (saveDirectoryHandle?`Annotation output: ${saveDirectoryHandle.name}`:"Annotation output: not set");
+  els.labelsFolderLabel.textContent=exampleMode?"Labels: repository examples":
+    (labelsSourceName?`Labels: ${labelsSourceName}`:"Labels: image folder");
+}
 function setSaveDirectory(handle){
   saveDirectoryHandle=handle||null;
   els.saveFolderLabel.textContent=saveDirectoryHandle
@@ -928,6 +994,7 @@ function setLabelsSourceLabel(name){
   els.labelsFolderLabel.textContent=name ? `Labels: ${name}` : "Labels: image folder";
 }
 async function chooseSaveDirectory(){
+  if(exampleMode){status("Example mode keeps annotations in RAM. Open a local working folder to enable disk saving.");return null}
   if(!window.showDirectoryPicker){
     status("Direct folder writing is unavailable in this browser. Use a Chromium-based browser.");
     return null;
@@ -967,22 +1034,116 @@ async function labelFilesFromDirectory(handle){
   return out;
 }
 els.openDirBtn.onclick=async()=>{
+  let switched=false;
+  const oldDirectory=directoryHandle,oldLabelsDirectory=labelsDirectoryHandle,oldSaveDirectory=saveDirectoryHandle;
+  const oldLabelsSource=labelsSourceName,wasExample=exampleMode;
   try{
     if(!window.showDirectoryPicker)throw new Error("Directory picker unavailable. Use a Chromium-based browser with folder access support.");
-    directoryHandle=await showDirectoryPicker({mode:"readwrite"});
-    labelsDirectoryHandle=directoryHandle;
-    setLabelsSourceLabel(directoryHandle.name);
-    setSaveDirectory(directoryHandle);
-    showLoading("Scanning image folder…",directoryHandle.name);
-    const files=await filesFromDirectory(directoryHandle);
+    const newDirectory=await showDirectoryPicker({mode:"readwrite"});
+    showLoading("Scanning image folder…",newDirectory.name);
+    const files=await filesFromDirectory(newDirectory);
+    if(!files.some(f=>IMAGE_FILE_EXTENSIONS.has(ext(f.name)))){
+      hideLoading();status("No supported images were found in that folder. The current images are unchanged.");return;
+    }
+    directoryHandle=newDirectory;labelsDirectoryHandle=newDirectory;
+    setLabelsSourceLabel(newDirectory.name);setSaveDirectory(newDirectory);
+    setExampleMode(false);switched=true;
     await loadFiles(files,true);
   }catch(e){
     hideLoading();
+    if(switched){
+      directoryHandle=oldDirectory;labelsDirectoryHandle=oldLabelsDirectory;
+      setLabelsSourceLabel(oldLabelsSource);setSaveDirectory(oldSaveDirectory);setExampleMode(wasExample);
+    }
     if(e.name!=="AbortError")status(`Folder error: ${e.message}`);
   }
 };
 els.welcomeOpenFolderBtn.onclick=()=>els.openDirBtn.click();
 els.welcomeLoadSessionBtn.onclick=()=>els.loadSessionBtn.click();
+
+// List public example images from the same repository as the app. The GitHub
+// Contents endpoint returns the current directory, so adding new images to
+// images_test_cvwaste_html requires no code changes.
+async function repositoryExampleFiles(){
+  const api=`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${EXAMPLE_REPO_FOLDER}`;
+  let listingError=null;
+  try{
+    const response=await fetch(api,{headers:{Accept:"application/vnd.github+json"}});
+    if(!response.ok)throw new Error(`GitHub directory listing HTTP ${response.status}`);
+    const entries=await response.json();
+    if(!Array.isArray(entries))throw new Error("Repository examples are not a directory.");
+    const supported=entries.filter(e=>e.type==="file"&&IMAGE_FILE_EXTENSIONS.has(ext(e.name))&&e.download_url);
+    if(!supported.length)throw new Error("No supported example images were found in the repository directory.");
+    const examples=supported.map(e=>({name:e.name,exampleUrl:e.download_url}));
+    // Optional YOLO annotations and class_names.txt in the example directory.
+    const texts=entries.filter(e=>e.type==="file"&&ext(e.name)===".txt"&&e.download_url);
+    for(const item of texts){
+      try{
+        const response=await fetch(item.download_url);
+        if(response.ok){
+          const content=await response.text();
+          examples.push(new File([content],item.name,{type:"text/plain"}));
+        }
+      }catch(e){console.warn(`Skipped example label ${item.name}:`,e)}
+    }
+    return examples;
+  }catch(e){listingError=e;console.warn("GitHub example listing unavailable; trying G-RAV.bmp directly:",e)}
+
+  // A known example image still allows trying the app when GitHub API rate
+  // limits prevent directory listing. Prefer the site's own deployed asset.
+  const rel=`${EXAMPLE_REPO_FOLDER}/${EXAMPLE_FALLBACK_FILE}`;
+  const candidates=[
+    new URL(rel,document.baseURI).href,
+    `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main/${rel}`,
+    `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/master/${rel}`
+  ];
+  for(const url of [...new Set(candidates)]){
+    try{
+      const response=await fetch(url);
+      if(!response.ok)continue;
+      const blob=await response.blob();
+      if(blob.size<2)continue;
+      const head=new Uint8Array(await blob.slice(0,2).arrayBuffer());
+      if(head[0]!==0x42||head[1]!==0x4d)continue; // reject 200 OK HTML fallbacks
+      return [new File([blob],EXAMPLE_FALLBACK_FILE,{type:"image/bmp"})];
+    }catch(e){console.warn("Example image fallback unavailable:",url,e)}
+  }
+  throw new Error(`Could not reach repository example images (${listingError?.message||"network unavailable"}).`);
+}
+
+async function openExampleFolder(){
+  if(exampleLoading)return;
+  exampleLoading=true;els.welcomeExampleFolderBtn.disabled=true;
+  const oldDirectory=directoryHandle,oldLabelsDirectory=labelsDirectoryHandle;
+  const oldSaveDirectory=saveDirectoryHandle,oldLabelsSource=labelsSourceName,wasExample=exampleMode;
+  try{
+    showLoading("Opening example folder…","Loading sample images from the CV Waste Web repository");
+    const exampleFiles=await repositoryExampleFiles();
+    // The first image is downloaded before changing datasets, so a broken URL
+    // cannot replace a previously loaded working folder.
+    const first=exampleFiles.find(f=>IMAGE_FILE_EXTENSIONS.has(ext(f.name)));
+    if(first?.exampleUrl){
+      const response=await fetch(first.exampleUrl);
+      if(!response.ok)throw new Error(`Could not download ${first.name} (HTTP ${response.status}).`);
+      const blob=await response.blob();
+      const i=exampleFiles.indexOf(first);
+      exampleFiles[i]=new File([blob],first.name,{type:blob.type||"application/octet-stream"});
+    }
+    directoryHandle=null;labelsDirectoryHandle=null;
+    setSaveDirectory(null);setLabelsSourceLabel(null);
+    pendingSessionRestore=null;
+    setExampleMode(true);
+    await loadFiles(exampleFiles,false);
+    status(`Example folder · ${records.length} image${records.length===1?"":"s"} from the repository. Edits stay in RAM only; open a local working folder to save to disk.`);
+  }catch(e){
+    directoryHandle=oldDirectory;labelsDirectoryHandle=oldLabelsDirectory;
+    setSaveDirectory(oldSaveDirectory);setLabelsSourceLabel(oldLabelsSource);setExampleMode(wasExample);
+    status(`Example folder failed: ${e?.message||e}`);
+  }finally{
+    hideLoading();exampleLoading=false;els.welcomeExampleFolderBtn.disabled=false;
+  }
+}
+els.welcomeExampleFolderBtn.onclick=openExampleFolder;
 els.saveFolderBtn.onclick=()=>chooseSaveDirectory();
 
 async function applyLabelsFiles(files,sourceName="separate folder"){
@@ -1206,6 +1367,12 @@ async function ensureRecordDecoded(r,{showOverlay=true,immediate=false}={}){
   try{
     if(!r.decodePromise){
       r.decodePromise=(async()=>{
+        if(r.file.exampleUrl){
+          const response=await fetch(r.file.exampleUrl);
+          if(!response.ok)throw new Error(`Example download HTTP ${response.status}`);
+          const blob=await response.blob();
+          r.file=new File([blob],r.name,{type:blob.type||"application/octet-stream"});
+        }
         const bm=TIFF_FILE_EXTENSIONS.has(ext(r.file.name))
           ?await decodeTiffBitmap(r.file)
           :await createImageBitmap(r.file);
@@ -1342,6 +1509,14 @@ function yoloText(r){
 }
 async function saveCurrent(silent=false){
   const r=rec();if(!r)return false;
+  if(exampleMode){
+    r.dirty=false;
+    r.lastSavedAnnotations=r.annotations.map(a=>a.slice());
+    r.lastSavedConfidences=r.confidences.slice();
+    renderImageList();
+    if(!silent)status(`Example annotations for ${r.name} saved in RAM only. Open a working folder for disk saving.`);
+    return true;
+  }
   const text=yoloText(r);
   try{
     if(!saveDirectoryHandle){
@@ -1428,6 +1603,7 @@ function sessionFileName(){
   return `avaw_session_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.json`;
 }
 async function saveSessionJson(){
+  if(exampleMode){status("Example mode: session exports are disabled. Open a working folder to save a real session.");return}
   const cfg=sessionSnapshot();
   const key=sessionHandleKey();
   let remembered=false;
@@ -1575,6 +1751,7 @@ async function reconnectSessionWorkingFolder(){
     setSaveDirectory(handle);
     showLoading("Restoring session images…",handle.name);
     const files=await filesFromDirectory(handle);
+    setExampleMode(false);
     await loadFiles(files,true);
     updateSessionRestoreDialog();
     const labels=cfg?.folders?.labels;
@@ -1669,6 +1846,7 @@ els.sessionFileInput.onchange=async()=>{
   try{await loadSessionJsonFile(file)}catch(e){status(`Session load failed: ${e?.message||e}`)}
 };
 async function saveAnnotated(){
+  if(exampleMode){status("Example mode: local downloads are disabled. Open a working folder for file exports.");return}
   const r=rec();if(!r)return;
   const c=document.createElement("canvas");c.width=r.width;c.height=r.height;
   const x=c.getContext("2d");x.drawImage(r.bitmap,0,0);
@@ -1688,7 +1866,10 @@ async function showRecord(idx,doAuto=true,{immediateLoad=false}={}){
   const navId=++navigationSequence;
   const previous=rec();
   if(doAuto&&previous?.dirty){
-    if(els.autoSave.checked){
+    if(exampleMode){
+      // Browser-only demo: never discard edits when switching example images.
+      await saveCurrent(true);
+    }else if(els.autoSave.checked){
       const saved=await saveCurrent(true);
       if(!saved){status("Navigation cancelled because the annotation was not saved.");return}
     }else discardUnsavedAnnotations(previous);
