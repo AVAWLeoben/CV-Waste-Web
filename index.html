@@ -119,6 +119,16 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 .review-finding-btn.review-selected{border-left-color:#22d3ee!important;background:#173c4c!important;border-top-color:#16758a!important;border-right-color:#16758a!important;border-bottom-color:#16758a!important}
 .review-finding-title{display:block;font-weight:800;margin-bottom:3px}
 .review-finding-sub{display:block;color:#b8c7d5;font-size:11px;line-height:1.45}
+/* Review actions are embedded in the persistent, on-image comparison panel. */
+.review-decision-row{display:flex;gap:8px;margin-top:12px;pointer-events:auto}
+.review-decision-row button{flex:1;min-height:37px;padding:8px 10px;font-size:12px;font-weight:750;cursor:pointer}
+.review-decision-row button:disabled{cursor:not-allowed;opacity:.5}
+.review-accept{background:#0e766e!important;border-color:#31b9ab!important;color:white!important}
+.review-accept:hover:not(:disabled){background:#0e9187!important}
+.review-decline{background:#40232b!important;border-color:#b45363!important;color:#ffe8ea!important}
+.review-decline:hover:not(:disabled){background:#633240!important}
+.review-decision-state{font-size:11px;color:#bfccda;margin-top:6px;min-height:1.1em}
+.review-finding-btn.review-resolved{opacity:.69;border-left-color:#64748b!important}
 .review-stage-card{position:absolute;right:15px;top:13px;z-index:5;width:min(342px,calc(100% - 30px));padding:12px 14px;border:1px solid #6e7e8c;border-radius:10px;background:rgba(9,17,28,.95);box-shadow:0 10px 28px rgba(0,0,0,.4);pointer-events:none;color:#eef4fb;line-height:1.35}
 .review-stage-heading{font-size:11px;font-weight:850;letter-spacing:.06em;color:#fbbf24;margin-bottom:9px}
 .review-stage-value{display:flex;align-items:baseline;gap:8px;margin:6px 0;flex-wrap:wrap}
@@ -357,11 +367,12 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
          <div class="row"><label class="small"><input id="reviewShowPred" type="checkbox" checked> Show flagged predictions</label></div>
          <div class="row"><label class="small"><input id="reviewShowGT" type="checkbox" checked> Highlight matching GT (audit snapshot)</label></div>
          <div id="reviewBoxHint" class="small" style="margin:5px 0;color:#cbd5e1">Select a finding to highlight its predicted box.</div>
+         <div class="row"><button id="reviewAcceptSideBtn" class="review-accept grow" disabled>✓ Accept prediction</button><button id="reviewDeclineSideBtn" class="review-decline grow" disabled>✕ Decline</button></div>
          <div class="row"><button id="reviewFocusBtn" class="grow" disabled>Focus box</button><button id="reviewResetViewBtn" disabled>Fit image</button></div>
          <div id="reviewIssues" class="small" style="max-height:230px;overflow:auto;margin:8px 0;line-height:1.5"></div>
          <div class="row"><button id="reviewMarkBtn" class="grow" disabled>Mark reviewed + next</button><button id="reviewUnmarkBtn" disabled>Reopen</button></div>
          <button id="reviewExportBtn" style="width:100%" disabled>Export review CSV</button>
-         <div class="small" style="margin-top:6px">Review status is stored separately from YOLO labels. Save annotations before marking reviewed.</div>
+         <div class="small" style="margin-top:6px">Accept writes the model box/class to your YOLO label file (replacing an overlapping box or adding a new one). Decline does not apply the prediction (any manual edits are saved first). Both focus the next unresolved finding and save decisions in browser progress.</div>
        </div>
 
       <div class="section">
@@ -471,6 +482,11 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
           <span id="reviewStagePred" class="review-stage-name"></span>
         </div>
         <div id="reviewStageMeta" class="review-stage-meta"></div>
+        <div class="review-decision-row">
+          <button id="reviewAcceptBtn" class="review-accept" type="button" disabled title="Use the model prediction as a YOLO annotation and save to the selected label folder.">✓ Accept</button>
+          <button id="reviewDeclineBtn" class="review-decline" type="button" disabled title="Keep the annotation unchanged and advance to the next finding.">✕ Decline</button>
+        </div>
+        <div id="reviewDecisionState" class="review-decision-state"></div>
       </div>
 
 
@@ -625,7 +641,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
     <b>Q/A / E/D / ←/→</b> = previous/next image<br>
     <b>Y</b> = run LiteRT YOLO · <b>Alt/AltGr+click</b> = add best prediction containing the point<br><br>
     <b>Detection:</b> <b>N</b> = new box, then drag · drag yellow corner handles = resize<br>
-    <b>Review:</b> choose <b>Task → Review</b>, open the working folder and load the audit CSV from the updated Python audit script. Click a finding to highlight its prediction (cyan); other flagged predictions are magenta. The dashed amber box shows its nearest GT at audit time. Click <b>Focus selected finding</b> to zoom to the object. Predictions and class names come from the audit CSV exported by Python using the .pt model; CV Waste does not load .pt models. Predictions are view-only and never saved as labels. Edit BBOX labels, save, then mark the image reviewed.<br>
+    <b>Review:</b> choose <b>Task → Review</b>, open the working folder and load the audit CSV from the updated Python audit script. Click a finding to highlight its prediction (cyan); other flagged predictions are magenta. The dashed amber box shows its nearest GT at audit time. Click <b>Focus selected finding</b> to zoom to the object. Predictions and class names come from the audit CSV exported by Python using the .pt model; CV Waste does not load .pt models. Predictions are read-only until you explicitly click Accept. Accept adds/replaces the selected YOLO box with the model proposal, then saves the .txt and advances to the next finding. Decline leaves annotation files untouched and advances. Review decisions are exported with Export review CSV.<br>
     <b>Segmentation:</b> choose <b>Click vertices</b> or <b>Freehand drag</b> · <b>N</b> = new polygon<br>
     Click mode: place vertices, <b>Enter</b>/double-click = finish · Drag mode: hold and draw, release = finish · <b>Esc</b> = cancel<br>
     Click a polygon vertex to select/drag it · <b>Insert/I</b> = add midpoint vertex · <b>Backspace</b> = delete selected vertex.<br>
@@ -668,6 +684,7 @@ const els={
  undoBtn:$("undoBtn"),helpBtn:$("helpBtn"),
  imageList:$("imageList"),prevBtn:$("prevBtn"),nextBtn:$("nextBtn"),jumpInput:$("jumpInput"),
  reviewPanel:$("reviewPanel"),loadReviewBtn:$("loadReviewBtn"),reviewFileInput:$("reviewFileInput"),reviewFilter:$("reviewFilter"),reviewSummary:$("reviewSummary"),reviewIssues:$("reviewIssues"),reviewMarkBtn:$("reviewMarkBtn"),reviewUnmarkBtn:$("reviewUnmarkBtn"),reviewExportBtn:$("reviewExportBtn"),reviewShowPred:$("reviewShowPred"),reviewShowGT:$("reviewShowGT"),reviewBoxHint:$("reviewBoxHint"),reviewFocusBtn:$("reviewFocusBtn"),reviewResetViewBtn:$("reviewResetViewBtn"),
+ reviewAcceptBtn:$("reviewAcceptBtn"),reviewDeclineBtn:$("reviewDeclineBtn"),reviewAcceptSideBtn:$("reviewAcceptSideBtn"),reviewDeclineSideBtn:$("reviewDeclineSideBtn"),reviewDecisionState:$("reviewDecisionState"),
  reviewComparison:$("reviewComparison"),reviewComparisonHeading:$("reviewComparisonHeading"),reviewGtRole:$("reviewGtRole"),reviewGtName:$("reviewGtName"),reviewGtMeta:$("reviewGtMeta"),reviewPredName:$("reviewPredName"),reviewPredMeta:$("reviewPredMeta"),reviewComparisonNote:$("reviewComparisonNote"),reviewStageCard:$("reviewStageCard"),reviewStageHeading:$("reviewStageHeading"),reviewStageGT:$("reviewStageGT"),reviewStagePred:$("reviewStagePred"),reviewStageMeta:$("reviewStageMeta"),
  classSelect:$("classSelect"),annotationHeading:$("annotationHeading"),addBoxBtn:$("addBoxBtn"),deleteBtn:$("deleteBtn"),copyBtn:$("copyBtn"),pasteBtn:$("pasteBtn"),
  segTools:$("segTools"),polyDrawMode:$("polyDrawMode"),polyDrawHint:$("polyDrawHint"),
@@ -719,6 +736,7 @@ let reviewActive=false;
 let reviewRows=[];
 let reviewByIndex=new Map();
 let reviewStatuses=new Map();
+let reviewDecisions=new Map(); // Per finding: decision, action and time. Never edits CSV source rows.
 let reviewCsvName="suspicious_annotations.csv";
 let reviewVisibleIndices=[];
 let reviewSelectedFinding=0; // Index within current image's CSV findings.
@@ -1997,6 +2015,43 @@ function reviewClassText(row,prefix){
   if(!Number.isInteger(id)||id<0)return "No matching GT";
   return `${reviewClassName(row,prefix)} [${id}]`;
 }
+// Recheck predictions against the CURRENT editable labels, not just the
+// snapshot saved when the CSV was created. This prevents stale or path-mismatched
+// audit results from being presented as confirmed missing annotations.
+function reviewCurrentGTMatch(row){
+  const r=rec();
+  const b=reviewBox(row,"pred");
+  const objects=r?.annotations||[];
+  const total=objects.length;
+  if(!r||!b||projectMode!=="detect")return {count:total,match:null};
+  const px1=b.x1*r.width,py1=b.y1*r.height,px2=b.x2*r.width,py2=b.y2*r.height;
+  const parea=(px2-px1)*(py2-py1);
+  let best=null;
+  objects.forEach((a,index)=>{
+    if(!Array.isArray(a)||a.length!==5)return;
+    const [cls,gx1,gy1,gx2,gy2]=a;
+    const ix=Math.max(0,Math.min(px2,gx2)-Math.max(px1,gx1));
+    const iy=Math.max(0,Math.min(py2,gy2)-Math.max(py1,gy1));
+    const inter=ix*iy,ga=Math.max(0,(gx2-gx1)*(gy2-gy1));
+    const iou=inter/Math.max(1e-9,parea+ga-inter);
+    const coverage=inter/Math.max(1e-9,parea);
+    const cx=(px1+px2)/2,cy=(py1+py2)/2;
+    const gcx=(gx1+gx2)/2,gcy=(gy1+gy2)/2;
+    const centered=(cx>=gx1&&cx<=gx2&&cy>=gy1&&cy<=gy2)||
+      (gcx>=px1&&gcx<=px2&&gcy>=py1&&gcy<=py2);
+    const related=iou>=0.10||coverage>=0.20||centered;
+    const score=iou+(centered?0.00001:0);
+    if(related&&(!best||score>best.score))best={index,cls,iou,coverage,related,score,
+      box:{x1:gx1/r.width,y1:gy1/r.height,x2:gx2/r.width,y2:gy2/r.height}};
+  });
+  return {count:total,match:best};
+}
+function reviewDisplayedGT(row, currentMatch){
+  if(currentMatch?.match)return String(classNames[currentMatch.match.cls]??`Class ${currentMatch.match.cls}`);
+  if(row?.issue==="POSSIBLE_MISSING_LABEL"||row?.issue==="LABEL_FILE_NOT_FOUND")
+    return "No matching annotation for THIS prediction";
+  return reviewClassName(row,"gt");
+}
 function selectedReviewRow(){
   const rows=reviewActive?(reviewByIndex.get(current)||[]):[];
   return rows[reviewSelectedFinding]||rows[0]||null;
@@ -2025,6 +2080,19 @@ function focusSelectedReviewFinding(){
 }
 
 function reviewBaseName(path){return String(path||"").replace(/\\/g,"/").split("/").pop().toLowerCase()}
+function reviewFindingKey(row){
+  // Stable across CSV re-imports and Windows/Linux path separators.
+  return [reviewBaseName(row.image),String(row.pred_index??""),
+    ...["pred_x1","pred_y1","pred_x2","pred_y2","issue","gt_index"].map(k=>String(row[k]??""))].join("|");
+}
+function reviewDecisionOf(row){return row?reviewDecisions.get(reviewFindingKey(row))||null:null}
+function reviewDecisionStorageKey(){return reviewStorageKey()+":findings-v1"}
+function persistReviewDecisions(){
+  try{localStorage.setItem(reviewDecisionStorageKey(),JSON.stringify([...reviewDecisions]))}
+  catch(e){console.warn("Review decision local persistence unavailable",e)}
+}
+function reviewPendingInImage(index){return (reviewByIndex.get(index)||[]).filter(r=>!reviewDecisionOf(r)).length}
+function firstPendingFinding(index){return (reviewByIndex.get(index)||[]).findIndex(r=>!reviewDecisionOf(r))}
 function parseReviewCSV(text){
   // Quoted RFC4180 fields, escaped quotes and Windows paths supported.
   text=String(text).replace(/^\uFEFF/,"");
@@ -2056,7 +2124,7 @@ function persistReview(){
   catch(e){console.warn("Review status local persistence unavailable",e)}
 }
 function resetReview(){
-  reviewActive=false;reviewRows=[];reviewByIndex=new Map();reviewStatuses=new Map();reviewVisibleIndices=[];
+  reviewActive=false;reviewRows=[];reviewByIndex=new Map();reviewStatuses=new Map();reviewDecisions=new Map();reviewVisibleIndices=[];
   reviewSelectedFinding=0;
   els.reviewFileInput.value="";updateReviewUI();renderImageList();refreshProgress();
 }
@@ -2097,58 +2165,96 @@ function reviewNextIndex(from,step=1){
 }
 function reviewIssueTitle(row){
   if(row?.issue==="CLASS_MISMATCH")return "CLASS DISAGREEMENT";
-  if(row?.issue==="POSSIBLE_MISSING_LABEL")return "POSSIBLY UNLABELED OBJECT";
-  if(row?.issue==="MISSING_OR_BAD_BOX")return "BOX LOCATION / MATCH UNCERTAIN";
+  if(row?.issue==="POSSIBLE_MISSING_LABEL")return "POSSIBLY UNANNOTATED OBJECT";
+  if(row?.issue==="LABEL_FILE_NOT_FOUND")return "LABEL FILE NOT FOUND DURING AUDIT";
+  if(row?.issue==="MISSING_OR_BAD_BOX"||row?.issue==="BOX_MATCH_UNCERTAIN")return "BOX MATCH / LOCATION UNCERTAIN";
+  if(row?.issue==="GT_WITHOUT_MATCHING_PRED")return "MODEL MISSED AN ANNOTATED OBJECT";
   return String(row?.issue||"AUDIT FINDING").replaceAll("_"," ");
 }
 function reviewBrief(row){
   const issue=row?.issue;
-  if(issue==="CLASS_MISMATCH")return "The model disagrees with the saved label. Inspect the object: the model can also be wrong.";
-  if(issue==="POSSIBLE_MISSING_LABEL")return "The model detected an object with no ground-truth match. Check whether an annotation is missing.";
-  if(issue==="MISSING_OR_BAD_BOX")return "This prediction does not closely match an annotation. Check the box location and nearby objects.";
-  return "Check the indicated object before changing the annotation.";
+  if(issue==="CLASS_MISMATCH")return "The model disagrees with the saved annotation; the model may be wrong.";
+  if(issue==="LABEL_FILE_NOT_FOUND")return "The auditor could not open this image's label file. Verify the Python LABEL_DIR. Do not assume these objects are unannotated.";
+  if(issue==="POSSIBLE_MISSING_LABEL")return "This particular prediction was not associated with a GT box during the audit. Other objects in this image may be annotated.";
+  if(issue==="MISSING_OR_BAD_BOX"||issue==="BOX_MATCH_UNCERTAIN")return "The model box overlaps or is close to an existing annotation, but the boxes do not agree sufficiently. Inspect the location before adding another box.";
+  if(issue==="GT_WITHOUT_MATCHING_PRED")return "An existing annotation was not detected by the model at the chosen confidence threshold. This is not necessarily a label error.";
+  return "Check the indicated object before changing an annotation.";
 }
 function updateReviewComparison(selected,position,total){
   const show=Boolean(reviewTaskSelected&&reviewActive&&selected);
   els.reviewComparison.hidden=!show;
   els.reviewStageCard.hidden=!show;
   if(!show)return;
-  const labelName=selected.issue==="POSSIBLE_MISSING_LABEL"?"No matching label":reviewClassName(selected,"gt");
+  const live=reviewCurrentGTMatch(selected);
+  const matching=live.match;
+  const legacyMissing=selected.issue==="POSSIBLE_MISSING_LABEL"||selected.issue==="LABEL_FILE_NOT_FOUND";
+  const hasCurrentMatch=Boolean(matching);
+  const auditGTCount=Number(selected.gt_count);
+  const auditGTLoaded=Number.isFinite(auditGTCount)&&String(selected.gt_count).trim()!=="";
+  const statusName=legacyMissing&&hasCurrentMatch
+    ? "ANNOTATION FOUND NOW — CHECK AUDIT"
+    :auditGTLoaded&&auditGTCount>0&&live.count===0
+      ? "ANNOTATIONS NOT LOADED IN REVIEW"
+      :reviewIssueTitle(selected);
+  const labelName=reviewDisplayedGT(selected,live);
   const predName=reviewClassName(selected,"pred");
   const rawGt=Number(selected.gt_class),rawPred=Number(selected.pred_class);
-  const gtId=Number.isInteger(rawGt)&&rawGt>=0?`Class ID ${rawGt}`:"Not annotated";
+  const gtId=hasCurrentMatch?`Class ID ${matching.cls} · Current IoU ${matching.iou.toFixed(2)}`
+    :(Number.isInteger(rawGt)&&rawGt>=0?`Class ID ${rawGt} · Audit snapshot`:`${live.count} annotation(s) loaded in image`);
   const predId=Number.isInteger(rawPred)&&rawPred>=0?`Class ID ${rawPred}`:"Unknown class";
   const confidence=Number(selected.confidence);
   const confidenceText=Number.isFinite(confidence)?`${(confidence*100).toFixed(1)}% confidence`:"Confidence unavailable";
   const iou=Number(selected.iou);
-  const iouText=Number.isFinite(iou)?` · IoU ${iou.toFixed(2)}`:"";
-  const heading=`${reviewIssueTitle(selected)} · ${position}/${total}`;
+  const iouText=Number.isFinite(iou)?` · Audit IoU ${iou.toFixed(2)}`:"";
+  const heading=`${statusName} · ${position}/${total}`;
   els.reviewComparisonHeading.textContent=heading;
-  els.reviewGtRole.textContent=selected.issue==="MISSING_OR_BAD_BOX"?"NEAREST ANNOTATION · NOT A MATCH":"ANNOTATION · GROUND TRUTH";
+  els.reviewGtRole.textContent=hasCurrentMatch?"CURRENT ANNOTATION · SAME AREA":
+    (legacyMissing?"NO ASSOCIATED ANNOTATION IN AUDIT":"ANNOTATION · AUDIT SNAPSHOT");
   els.reviewGtName.textContent=labelName;
   els.reviewGtMeta.textContent=gtId;
   els.reviewPredName.textContent=predName;
   els.reviewPredMeta.textContent=`${predId} · ${confidenceText}${iouText}`;
-  els.reviewComparisonNote.textContent=reviewBrief(selected);
+  const notes=[reviewBrief(selected),`Currently loaded GT boxes in this image: ${live.count}.`];
+  if(auditGTLoaded&&auditGTCount>0&&live.count===0)notes.unshift(
+    "The audit read existing annotations, but the web application currently has none loaded. Load the correct Labels Folder before reviewing this finding.");
+  if(hasCurrentMatch&&legacyMissing)notes.unshift(
+    "A current annotation overlaps this prediction. Do not create a duplicate box. The CSV may be outdated or the auditor may have used a different label folder.");
+  else if(!hasCurrentMatch&&live.count>0&&legacyMissing)notes.unshift(
+    "Other annotations exist in this image, but none is spatially associated with the SELECTED prediction.");
+  if(selected.label_file_status==="FILE_MISSING")notes.push("WARNING: Python audit did not find the label file; check LABEL_DIR.");
+  if(selected.gt_count!==undefined&&selected.gt_count!=="")notes.push(`Audit read ${selected.gt_count} GT boxes.`);
+  els.reviewComparisonNote.textContent=notes.join(" ");
   els.reviewStageHeading.textContent=heading;
-  els.reviewStageGT.textContent=labelName;
+  els.reviewStageGT.textContent=hasCurrentMatch?labelName:(legacyMissing?`${live.count} other GT boxes`:labelName);
   els.reviewStagePred.textContent=`${predName} · ${confidenceText}`;
-  els.reviewStageMeta.textContent="Amber dashed = audit label · Cyan solid = selected model box";
+  els.reviewStageMeta.textContent=hasCurrentMatch?
+    "Amber dashed = current matching annotation · Cyan = selected model prediction":
+    "Colored boxes = existing labels · Cyan = selected model prediction";
 }
 function updateReviewUI(){
   els.reviewExportBtn.disabled=!reviewActive;
   const flagged=reviewByIndex.size;
   const completed=[...reviewByIndex.keys()].filter(i=>reviewStatuses.get(records[i].name)==="reviewed").length;
   const issues=[...reviewByIndex.values()].reduce((n,x)=>n+x.length,0);
+  const decided=[...reviewByIndex.values()].reduce((n,x)=>n+x.filter(r=>reviewDecisionOf(r)).length,0);
   if(reviewActive){
     updateReviewVisible();
-    els.reviewSummary.textContent=`${completed}/${flagged} images reviewed · ${issues} findings · ${reviewVisibleIndices.length} shown`;
+    els.reviewSummary.textContent=`${decided}/${issues} findings decided · ${completed}/${flagged} images complete · ${reviewVisibleIndices.length} shown`;
   }else els.reviewSummary.textContent="Load the working folder, then import suspicious_annotations.csv.";
   const entries=reviewActive?(reviewByIndex.get(current)||[]):[];
   if(reviewSelectedFinding>=entries.length)reviewSelectedFinding=0;
   const selected=entries[reviewSelectedFinding]||null;
   updateReviewComparison(selected,Math.min(reviewSelectedFinding+1,entries.length),entries.length);
   const coordinatesAvailable=!!(selected&&reviewBox(selected,"pred"));
+  const decidedFinding=reviewDecisionOf(selected);
+  const actionDisabled=!reviewTaskSelected||!reviewActive||!selected||reviewActionBusy;
+  els.reviewAcceptBtn.disabled=els.reviewAcceptSideBtn.disabled=actionDisabled||!coordinatesAvailable||!!decidedFinding;
+  els.reviewDeclineBtn.disabled=els.reviewDeclineSideBtn.disabled=actionDisabled||!!decidedFinding;
+  els.reviewAcceptBtn.textContent=selected?.issue==="CLASS_MISMATCH"?"✓ Use model class / box":"✓ Accept box";
+  els.reviewAcceptSideBtn.textContent=els.reviewAcceptBtn.textContent;
+  els.reviewDecisionState.textContent=decidedFinding
+    ?`${decidedFinding.decision.toUpperCase()}${decidedFinding.action?` · ${decidedFinding.action}`:""} — choose another pending finding`:
+      (selected?`${reviewPendingInImage(current)} pending in this image · Accept saves .txt`:"");
   els.reviewFocusBtn.disabled=!coordinatesAvailable;
   els.reviewResetViewBtn.disabled=!rec()?.bitmap;
   els.reviewMarkBtn.disabled=!entries.length||reviewStatuses.get(rec()?.name)==="reviewed";
@@ -2166,13 +2272,16 @@ function updateReviewUI(){
       const line=document.createElement("button");
       line.type="button";
       const active=i===reviewSelectedFinding;
-      line.className="review-finding-btn"+(active?" review-selected":"");
+      const decision=reviewDecisionOf(row);
+      line.className="review-finding-btn"+(active?" review-selected":"")+(decision?" review-resolved":"");
       const title=document.createElement("span");title.className="review-finding-title";
-      title.textContent=`${active?"▶ ":""}#${i+1} ${reviewIssueTitle(row)}`;
+      title.textContent=`${active?"▶ ":""}#${i+1} ${decision?(decision.decision==="accepted"?"✓ ACCEPTED":"✕ DECLINED"):reviewIssueTitle(row)}`;
       const sub=document.createElement("span");sub.className="review-finding-sub";
       const confidence=Number(row.confidence);
       const conf=Number.isFinite(confidence)?`${(confidence*100).toFixed(0)}%`:"—";
-      sub.textContent=`${reviewClassName(row,"gt")} → ${reviewClassName(row,"pred")} · ${conf}`;
+      const live=reviewCurrentGTMatch(row);
+      const gtName=reviewDisplayedGT(row,live);
+      sub.textContent=`${gtName} → ${reviewClassName(row,"pred")} · ${conf}`;
       line.append(title,sub);
       line.title="Select this finding to highlight its predicted bounding box.";
       line.onclick=()=>selectReviewFinding(i);
@@ -2190,11 +2299,20 @@ async function importReview(file){
   reviewRows=parsed;reviewCsvName=file.name;reviewActive=reviewTaskSelected;
   reviewSelectedFinding=0;
   const {unmatched,ambiguous}=buildReviewIndex();
-  reviewStatuses=new Map();
+  reviewStatuses=new Map();reviewDecisions=new Map();
   try{
     const saved=JSON.parse(localStorage.getItem(reviewStorageKey())||"[]");
     if(Array.isArray(saved))reviewStatuses=new Map(saved);
+    const decisions=JSON.parse(localStorage.getItem(reviewDecisionStorageKey())||"[]");
+    if(Array.isArray(decisions))reviewDecisions=new Map(decisions);
   }catch(e){console.warn("Could not load saved review progress",e)}
+  // Imported CSV decisions are portable across browsers, unlike localStorage.
+  for(const row of reviewRows){
+    if(row.review_decision==="accepted"||row.review_decision==="declined"){
+      reviewDecisions.set(reviewFindingKey(row),{decision:row.review_decision,
+        action:row.review_action||"",at:row.review_decided_at||""});
+    }
+  }
   for(const r of reviewRows){
     if(r.review_status&&r.review_status.toLowerCase()==="reviewed"){
       const name=reviewBaseName(r.image);
@@ -2215,16 +2333,121 @@ function csvValue(s){
 function exportReviewCSV(){
   if(!reviewActive)return;
   // Preserve coordinates and any future audit fields on progress export.
-  const keys=[...new Set([...reviewRows.flatMap(r=>Object.keys(r).filter(k=>!k.startsWith("__"))),"review_status"])];
+  const keys=[...new Set([...reviewRows.flatMap(r=>Object.keys(r).filter(k=>!k.startsWith("__"))),
+    "review_status","review_decision","review_action","review_decided_at"])];
   const rows=reviewRows.map(r=>{
     const matching=[...reviewByIndex.keys()].find(i=>reviewBaseName(records[i].name)===reviewBaseName(r.image));
     const result=matching===undefined?"unmatched":(reviewStatuses.get(records[matching].name)||"pending");
-    return {...r,review_status:result};
+    const decision=reviewDecisionOf(r);
+    return {...r,review_status:result,review_decision:decision?.decision||"",
+      review_action:decision?.action||"",review_decided_at:decision?.at||""};
   });
   const content="\uFEFF"+keys.join(",")+"\r\n"+rows.map(r=>keys.map(k=>csvValue(r[k])).join(",")).join("\r\n")+"\r\n";
   downloadBlob(new Blob([content],{type:"text/csv;charset=utf-8"}),"review_progress.csv");
   status("Review progress CSV exported.");
 }
+// Explicit review decisions. Accept changes annotations and MUST save before
+// advancing. Decline does not apply the model prediction. Neither operation
+// changes the audit CSV until Export review CSV is requested.
+let reviewActionBusy=false;
+function resolveReviewPredictionClass(row){
+  const raw=Number(row.pred_class);
+  if(!Number.isInteger(raw)||raw<0)return {error:"Prediction has no usable class ID."};
+  const name=String(row.pred_name||"").trim().toLowerCase().replace(/[\s_-]+/g,"");
+  if(name){
+    const matches=classNames.map((x,i)=>[String(x).trim().toLowerCase().replace(/[\s_-]+/g,""),i])
+      .filter(([s])=>s===name).map(([,i])=>i);
+    if(matches.length===1)return {cls:matches[0]};
+    if(matches.length>1)return {error:`Ambiguous dataset class name '${row.pred_name}'.`};
+    return {error:`Model class '${row.pred_name}' is not in the loaded dataset classes. Load the correct class_names.txt before accepting.`};
+  }
+  if(raw>=classNames.length)return {error:`Class ID ${raw} is not in the loaded dataset classes.`};
+  return {cls:raw};
+}
+function reviewReplacementIndex(row){
+  const match=reviewCurrentGTMatch(row).match;
+  if(!match)return {index:-1};
+  // At low IoU, a center-inside match can be an unrelated nearby object.
+  // Do not replace it automatically OR create a duplicate: ask for manual edit.
+  if(match.iou<0.15)return {error:"A nearby annotation overlaps this prediction ambiguously. Inspect/edit it manually; automatic acceptance was blocked to protect existing labels."};
+  return {index:match.index};
+}
+async function advanceReviewDecision(){
+  const entries=reviewByIndex.get(current)||[];
+  const pending=entries.findIndex(r=>!reviewDecisionOf(r));
+  if(pending>=0){
+    reviewSelectedFinding=pending;
+    updateReviewUI();focusSelectedReviewFinding();requestDraw();
+    return;
+  }
+  // All findings on this image are resolved; mark it reviewed and navigate to
+  // another pending image, keeping the same on-stage review panel.
+  const r=rec();if(r){reviewStatuses.set(r.name,"reviewed");persistReview()}
+  updateReviewUI();renderImageList();refreshProgress();
+  const nextIndex=reviewVisibleIndices.find(i=>i!==current&&reviewPendingInImage(i)>0);
+  if(nextIndex!==undefined){
+    await showRecord(nextIndex);
+    const nextFinding=firstPendingFinding(nextIndex);
+    if(nextFinding>=0){reviewSelectedFinding=nextFinding;updateReviewUI();focusSelectedReviewFinding();requestDraw()}
+  }else{
+    // Nothing unresolved remains, including while viewing "All flagged".
+    const anyPending=[...reviewByIndex.keys()].some(i=>reviewPendingInImage(i)>0);
+    if(!anyPending){els.reviewFilter.value="reviewed";updateReviewUI();renderImageList();refreshProgress()}
+  }
+}
+async function decideReviewFinding(decision){
+  if(reviewActionBusy||!reviewTaskSelected||!reviewActive||!rec())return;
+  const row=selectedReviewRow();if(!row||reviewDecisionOf(row))return;
+  const r=rec(),initialIndex=current;
+  reviewActionBusy=true;updateReviewUI();
+  let action="kept-existing-label";
+  try{
+    if(decision==="accepted"){
+      if(projectMode!=="detect")throw new Error("Review accepts only BBOX annotations.");
+      const bounds=reviewBox(row,"pred");
+      if(!bounds)throw new Error("This CSV finding has no prediction coordinates to accept.");
+      const cls=resolveReviewPredictionClass(row);
+      if(cls.error)throw new Error(cls.error);
+      const found=reviewReplacementIndex(row);
+      if(found.error)throw new Error(found.error);
+      // A class disagreement must refer to an existing label. Never turn a
+      // disagreement into an extra label because the GT was not loaded.
+      if(row.issue==="CLASS_MISMATCH"&&found.index<0){
+        throw new Error("No corresponding ground-truth annotation is loaded. Load labels or correct manually; refusing to add a duplicate for a class disagreement.");
+      }
+      const ann=[cls.cls,bounds.x1*r.width,bounds.y1*r.height,bounds.x2*r.width,bounds.y2*r.height];
+      pushUndo();
+      if(found.index>=0){
+        r.annotations[found.index]=ann;r.confidences[found.index]=null;
+        selected=found.index;action="replaced-existing-box";
+      }else{
+        r.annotations.push(ann);r.confidences.push(null);
+        selected=r.annotations.length-1;action="added-new-box";
+      }
+      selectedVertex=null;multi.clear();markDirty();refreshAll();
+      const saved=await saveCurrent(false);
+      if(!saved)throw new Error("Could not save the accepted annotation. Finding remains pending; retry Save Annotation before moving on.");
+    }else if(decision==="declined"){
+      // The user may have manually corrected boxes before declining a model
+      // proposal. Do not let navigation discard those manual corrections.
+      if(r.dirty){
+        const saved=await saveCurrent(false);
+        if(!saved)throw new Error("Unsaved manual edits: save them or undo them before declining and advancing.");
+      }
+    }else return;
+    if(current!==initialIndex)throw new Error("Image changed while completing the review decision.");
+    reviewDecisions.set(reviewFindingKey(row),{decision,action,at:new Date().toISOString()});
+    persistReviewDecisions();
+    reviewActionBusy=false;
+    await advanceReviewDecision();
+    status(`${decision==="accepted"?`Accepted model proposal (${action}), saved ${r.stem}.txt`:`Declined model proposal; annotations unchanged`} · next unresolved finding selected.`);
+  }catch(e){
+    status(`Review ${decision} could not finish: ${e.message}`);
+  }finally{reviewActionBusy=false;updateReviewUI();requestDraw()}
+}
+els.reviewAcceptBtn.onclick=els.reviewAcceptSideBtn.onclick=()=>void decideReviewFinding("accepted");
+els.reviewDeclineBtn.onclick=els.reviewDeclineSideBtn.onclick=()=>void decideReviewFinding("declined");
+
 els.loadReviewBtn.onclick=()=>{els.reviewFileInput.value="";els.reviewFileInput.click()};
 els.reviewFileInput.onchange=async()=>{
   const file=els.reviewFileInput.files?.[0];if(!file)return;
@@ -2283,7 +2506,7 @@ async function showRecord(idx,doAuto=true,{immediateLoad=false}={}){
   if(navId!==navigationSequence)return;
 
   cancelDraftPolygon(false);
-  if(current!==idx)reviewSelectedFinding=0;
+  if(current!==idx){const nextPending=firstPendingFinding(idx);reviewSelectedFinding=nextPending>=0?nextPending:0}
   current=idx;selected=null;selectedVertex=null;multi.clear();undoStack=[];mode="select";
   els.addBoxBtn.classList.remove("active");
   resetView();refreshAll();
@@ -2862,7 +3085,8 @@ function drawReviewPredictions(x,r,s,ox,oy){
   // The GT snapshot is an audit-time reference, NOT a model prediction. It is
   // read-only and intentionally distinguishable by stroke pattern and color.
   if(els.reviewShowGT.checked){
-    const b=reviewBox(selectedRow,"gt");
+    const live=reviewCurrentGTMatch(selectedRow);
+    const b=live.match?.box||reviewBox(selectedRow,"gt");
     if(b){
       const X=ox+b.x1*r.width*s,Y=oy+b.y1*r.height*s;
       const W=(b.x2-b.x1)*r.width*s,H=(b.y2-b.y1)*r.height*s;
