@@ -9,7 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import traceback
-from greenplast_environment import EnvironmentManager
+from greenplast_environment import EnvironmentManager, env_python, process_environment
 
 APP_DIR = Path(__file__).resolve().parent
 
@@ -30,10 +30,9 @@ def main():
     conda, env, check = EnvironmentManager(report).setup()
     print(f"[GreenPlast] Ready: {env}", flush=True)
     print(f"[GreenPlast] CUDA accessible: {check.get('cuda', False)}", flush=True)
-    args = [conda, "run", "--no-capture-output", "-p", str(env),
-            "python", "-u", str(APP_DIR / "greenplast_launcher.py"),
+    args = [str(env_python(env)), "-u", str(APP_DIR / "greenplast_launcher.py"),
             "--env-prefix", str(env), "--conda-exe", conda]
-    return subprocess.call(args, cwd=str(APP_DIR))
+    return subprocess.call(args, cwd=str(APP_DIR), env=process_environment(env))
 
 
 if __name__ == "__main__":

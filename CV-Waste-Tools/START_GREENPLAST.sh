@@ -34,6 +34,12 @@ fi
 export CONDA_EXE="$CONDA_BIN"
 echo "[GreenPlast] Conda: $CONDA_BIN"
 echo "[GreenPlast] Detecting a suitable environment (CUDA PyTorch if available) ..."
-# The bootstrap uses only Python's standard library, so the Conda base env
-# does not need Tkinter, NumPy, Ultralytics or PyTorch installed.
-"$CONDA_BIN" run --no-capture-output -n base python -u "$APP_DIR/greenplast_bootstrap.py"
+# The bootstrap uses only Python's standard library. Launch base Python
+# directly where possible, avoiding a slow `conda run -n base` on every start.
+CONDA_REAL="$(readlink -f "$CONDA_BIN" 2>/dev/null || printf '%s' "$CONDA_BIN")"
+BASE_PYTHON="$(dirname "$(dirname "$CONDA_REAL")")/bin/python"
+if [[ -x "$BASE_PYTHON" ]]; then
+  exec "$BASE_PYTHON" -u "$APP_DIR/greenplast_bootstrap.py"
+else
+  exec "$CONDA_BIN" run --no-capture-output -n base python -u "$APP_DIR/greenplast_bootstrap.py"
+fi

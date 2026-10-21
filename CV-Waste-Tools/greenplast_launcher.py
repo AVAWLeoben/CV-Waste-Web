@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import os
 from pathlib import Path
 import queue
@@ -11,7 +12,10 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from greenplast_environment import APP_DIR, EnvironmentManager, probe_env, MANAGED_NAME, MANAGED_DISPLAY_NAME
+from greenplast_environment import (APP_DIR, EnvironmentManager, probe_env,
+                                    cached_environment, save_cached_environment, CONFIG_FILE,
+                                    env_python, process_environment,
+                                    MANAGED_NAME, MANAGED_DISPLAY_NAME)
 
 class Launcher:
     def __init__(self, prepared=None):
@@ -23,13 +27,14 @@ class Launcher:
         self.conda = None
         self.env = None
         self.busy = False
+        self.child_processes = {}
         self.build_ui()
         self.root.after(100, self.process_messages)
         if prepared:
             conda, prefix, details = prepared
             self.process_ready(conda, prefix, details)
         else:
-            self.refresh()
+            self.refresh(force=False)
 
     def process_ready(self, conda, prefix, details):
         """Use a checked environment prepared by the Linux shell bootstrap."""
@@ -48,6 +53,7 @@ class Launcher:
             + (f"  |  {details['gpu']}" if details.get('gpu') else "")
         )
         self.append_log("Using verified Conda environment: " + str(self.env))
+        self.append_log("Persistent configuration: " + str(CONFIG_FILE))
 
     def build_ui(self):
         style = ttk.Style(self.root)
@@ -109,26 +115,27 @@ class Launcher:
         self.retry = ttk.Button(footer, text="Recheck / repair environment",
                                 command=self.refresh)
         self.retry.pack(side="left")
+        ttk.Button(footer, text="Open logs folder", command=self.open_logs_folder).pack(side="left", padx=(10, 0))
         ttk.Button(footer, text="Close", command=self.root.destroy).pack(side="right")
 
     def report(self, kind, value):
         self.msgs.put((kind, value))
 
-    def refresh(self):
+    def refresh(self, force=True):
         if self.busy:
             return
         self.busy = True
         self.train_button.configure(state="disabled")
         self.audit_button.configure(state="disabled")
         self.retry.configure(state="disabled")
-        self.status.set("Checking Conda environments ...")
+        self.status.set("Loading saved environment ..." if not force else "Rechecking Conda environment ...")
         self.env_text.set("Environment: checking")
         self.progress.configure(mode="indeterminate", value=0)
         self.progress.start(16)
 
         def worker():
             try:
-                settings = EnvironmentManager(self.report).setup()
+                settings = EnvironmentManager(self.report).setup(force_recheck=force)
                 self.report("ready", settings)
             except Exception as exc:
                 self.report("error", str(exc))
@@ -179,23 +186,82 @@ class Launcher:
                     messagebox.showerror("GreenPlast setup failed", str(value), parent=self.root)
         except queue.Empty:
             pass
+        self.poll_child_logs()
         if self.root.winfo_exists():
-            self.root.after(100, self.process_messages)
+            self.root.after(250, self.process_messages)
+
+    def open_logs_folder(self):
+        folder = APP_DIR / "logs"
+        folder.mkdir(parents=True, exist_ok=True)
+        try:
+            if os.name == "nt":
+                os.startfile(str(folder))
+            else:
+                subprocess.Popen(["xdg-open", str(folder)],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Cannot open logs", f"{folder}\n\n{exc}", parent=self.root)
+
+    def poll_child_logs(self):
+        """Stream child output into the existing GUI, without creating consoles."""
+        for pid, state in list(self.child_processes.items()):
+            process = state["process"]
+            try:
+                with state["path"].open("r", encoding="utf-8", errors="replace") as stream:
+                    stream.seek(state["offset"])
+                    chunk = stream.read(16000)
+                    state["offset"] = stream.tell()
+                if chunk:
+                    combined = (state["pending"] + chunk).replace("\r", "\n")
+                    lines = combined.split("\n")
+                    state["pending"] = lines.pop()
+                    # Huge training logs remain complete on disk. Keep GUI responsive.
+                    for line in lines[-35:]:
+                        if line.strip():
+                            self.append_log(f"[{state['name']}] {line[:600]}")
+                exit_code = process.poll()
+                # The process can exit while its last buffered log bytes are still
+                # available; finish only when the stream has been consumed.
+                remaining = state["path"].stat().st_size > state["offset"]
+                if exit_code is not None and not remaining:
+                    if state["pending"].strip():
+                        self.append_log(f"[{state['name']}] {state['pending'][:600]}")
+                    self.append_log(
+                        f"{state['name'].title()} finished (exit {exit_code}). "
+                        f"Full log: {state['path']}")
+                    if exit_code != 0:
+                        messagebox.showerror(
+                            f"{state['name'].title()} failed",
+                            f"The tool exited with code {exit_code}.\n\n"
+                            f"See the launcher log or: {state['path']}", parent=self.root)
+                    del self.child_processes[pid]
+            except OSError as exc:
+                self.append_log(f"Could not read {state['name']} log: {exc}")
 
     def launch(self, name):
         if not self.conda or not self.env:
             messagebox.showerror("Environment not ready", "Please wait for environment setup.")
             return
-        command = [self.conda, "run", "--no-capture-output", "-p", str(self.env),
-                   "python", "-u", str(APP_DIR / "run_tool.py"), name]
-        flags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
+        logs = APP_DIR / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        logfile = logs / f"{name}_{stamp}.log"
+        command = [str(env_python(self.env)), "-u", str(APP_DIR / "run_tool.py"), name]
+        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         try:
-            proc = subprocess.Popen(command, cwd=str(APP_DIR), creationflags=flags)
+            with logfile.open("w", encoding="utf-8") as output:
+                proc = subprocess.Popen(
+                    command, cwd=str(APP_DIR), env=process_environment(self.env),
+                    stdin=subprocess.DEVNULL, stdout=output,
+                    stderr=subprocess.STDOUT, creationflags=flags)
         except OSError as exc:
             messagebox.showerror("Launch failed", str(exc), parent=self.root)
             return
-        log_location = ("a separate console" if os.name == "nt" else "the launching terminal")
-        self.append_log(f"Started {name} (PID {proc.pid}). Output appears in {log_location}.")
+        self.child_processes[proc.pid] = {
+            "name": name, "path": logfile, "process": proc,
+            "offset": 0, "pending": "",
+        }
+        self.append_log(f"Started {name} (PID {proc.pid}); no separate console. Log: {logfile}")
 
     def run(self):
         self.root.mainloop()
@@ -211,10 +277,21 @@ def main(argv=None):
         if not args.env_prefix or not args.conda_exe:
             parser.error("--env-prefix and --conda-exe must both be specified")
         env = Path(args.env_prefix).resolve()
-        details = probe_env(args.conda_exe, env, needs_cuda=False)
-        if not details.get("ok"):
-            parser.error("Prepared environment is not usable: " + str(details.get("error", details)))
-        prepared = (args.conda_exe, env, details)
+        cached = cached_environment(expected_conda=args.conda_exe,
+                                    expected_prefix=env)
+        if cached:
+            prepared = cached
+        else:
+            # Prepared environment from Linux bootstrap is normally cached;
+            # verify if cache is absent or no longer matches its files/GPU.
+            details = probe_env(args.conda_exe, env, needs_cuda=False, timeout=480)
+            if not details.get("ok"):
+                parser.error("Prepared environment is not usable: " + str(details.get("error", details)))
+            prepared = (args.conda_exe, env, details)
+            try:
+                save_cached_environment(*prepared)
+            except OSError:
+                pass
     Launcher(prepared=prepared).run()
 
 
