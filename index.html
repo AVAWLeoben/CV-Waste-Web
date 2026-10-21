@@ -105,6 +105,28 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 .kbd{background:#0f141b;border:1px solid #475569;border-radius:4px;padding:1px 4px;font-size:10px}
 
 
+
+/* Audit review is intentionally a separate, high-contrast visual language. */
+.review-comparison{background:#101925;border:1px solid #496072;border-radius:10px;padding:10px;margin:10px 0;color:#f1f5f9}
+.review-comparison[hidden],.review-stage-card[hidden]{display:none!important}
+.review-issue-heading{font-size:12px;font-weight:800;letter-spacing:.03em;color:#fbbf24;margin-bottom:9px}
+.review-class-line{border-left:4px solid var(--review-color);background:#1c2733;border-radius:5px;padding:7px 9px;margin:6px 0}
+.review-class-label{font-size:10px;letter-spacing:.07em;font-weight:800;color:#cbd5e1;text-transform:uppercase}
+.review-class-value{font-size:15px;font-weight:800;line-height:1.35;color:#f8fafc;overflow-wrap:anywhere}
+.review-class-meta{font-size:11px;color:#adbccb}
+.review-compare-note{font-size:11px;color:#bdc9d5;line-height:1.4;margin-top:8px}
+.review-finding-btn{display:block;width:100%;text-align:left;margin:5px 0;padding:8px!important;white-space:normal;overflow-wrap:anywhere;font-size:12px!important;line-height:1.3;border-left:3px solid transparent!important}
+.review-finding-btn.review-selected{border-left-color:#22d3ee!important;background:#173c4c!important;border-top-color:#16758a!important;border-right-color:#16758a!important;border-bottom-color:#16758a!important}
+.review-finding-title{display:block;font-weight:800;margin-bottom:3px}
+.review-finding-sub{display:block;color:#b8c7d5;font-size:11px;line-height:1.45}
+.review-stage-card{position:absolute;right:15px;top:13px;z-index:5;width:min(342px,calc(100% - 30px));padding:12px 14px;border:1px solid #6e7e8c;border-radius:10px;background:rgba(9,17,28,.95);box-shadow:0 10px 28px rgba(0,0,0,.4);pointer-events:none;color:#eef4fb;line-height:1.35}
+.review-stage-heading{font-size:11px;font-weight:850;letter-spacing:.06em;color:#fbbf24;margin-bottom:9px}
+.review-stage-value{display:flex;align-items:baseline;gap:8px;margin:6px 0;flex-wrap:wrap}
+.review-stage-role{width:65px;flex:0 0 65px;font-size:10px;font-weight:800;letter-spacing:.06em}
+.review-stage-name{font-size:15px;font-weight:850;overflow-wrap:anywhere;flex:1}
+.review-stage-meta{font-size:11px;color:#b5c6d2}
+@media(max-width:760px){.review-stage-card{right:9px;top:8px;padding:8px 10px;width:min(275px,calc(100% - 18px))}.review-stage-name{font-size:13px}}
+
 /* Welcome hero: the marketing artwork exists only while no working image is loaded. */
 .welcome-screen{
   position:absolute;inset:0;z-index:3;isolation:isolate;
@@ -282,6 +304,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
     <select id="taskMode" title="Annotation format for the current dataset">
       <option value="detect">Detection · BBOX</option>
       <option value="segment">Segmentation · Polygon</option>
+      <option value="review">Review · Annotation audit</option>
     </select>
     <button id="openDirBtn" title="Open a local folder and save annotations there">Open Working Folder</button>
     <span id="exampleModeBadge" class="example-indicator hidden" title="Sample images from GitHub. Annotations stay in browser memory until you open a local working folder.">EXAMPLE · RAM ONLY</span>
@@ -310,7 +333,36 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
           <button id="nextBtn">▶</button>
         </div>
         <div id="imageList" class="list"></div>
-      </div>
+       </div>
+       <div class="section hidden" id="reviewPanel">
+         <h3>Annotation review</h3>
+         <div class="row"><button id="loadReviewBtn" class="grow">Load audit CSV</button></div>
+         <input id="reviewFileInput" class="hidden" type="file" accept=".csv,text/csv">
+         <div class="row"><label class="small" for="reviewFilter">Show</label><select id="reviewFilter" class="grow"><option value="pending">Pending</option><option value="all">All flagged</option><option value="reviewed">Reviewed</option></select></div>
+         <div id="reviewSummary" class="small">Load the working folder, then import suspicious_annotations.csv.</div>
+         <div id="reviewComparison" class="review-comparison" hidden aria-live="polite">
+           <div id="reviewComparisonHeading" class="review-issue-heading"></div>
+           <div class="review-class-line" style="--review-color:#fbbf24">
+             <div id="reviewGtRole" class="review-class-label">ANNOTATION · GROUND TRUTH</div>
+             <div id="reviewGtName" class="review-class-value"></div>
+             <div id="reviewGtMeta" class="review-class-meta"></div>
+           </div>
+           <div class="review-class-line" style="--review-color:#22d3ee">
+             <div class="review-class-label">MODEL PREDICTION</div>
+             <div id="reviewPredName" class="review-class-value"></div>
+             <div id="reviewPredMeta" class="review-class-meta"></div>
+           </div>
+           <div id="reviewComparisonNote" class="review-compare-note"></div>
+         </div>
+         <div class="row"><label class="small"><input id="reviewShowPred" type="checkbox" checked> Show flagged predictions</label></div>
+         <div class="row"><label class="small"><input id="reviewShowGT" type="checkbox" checked> Highlight matching GT (audit snapshot)</label></div>
+         <div id="reviewBoxHint" class="small" style="margin:5px 0;color:#cbd5e1">Select a finding to highlight its predicted box.</div>
+         <div class="row"><button id="reviewFocusBtn" class="grow" disabled>Focus box</button><button id="reviewResetViewBtn" disabled>Fit image</button></div>
+         <div id="reviewIssues" class="small" style="max-height:230px;overflow:auto;margin:8px 0;line-height:1.5"></div>
+         <div class="row"><button id="reviewMarkBtn" class="grow" disabled>Mark reviewed + next</button><button id="reviewUnmarkBtn" disabled>Reopen</button></div>
+         <button id="reviewExportBtn" style="width:100%" disabled>Export review CSV</button>
+         <div class="small" style="margin-top:6px">Review status is stored separately from YOLO labels. Save annotations before marking reviewed.</div>
+       </div>
 
       <div class="section">
         <h3 id="annotationHeading">Annotation · Detection</h3>
@@ -408,6 +460,18 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 
     <main class="stageWrap" id="stageWrap">
       <canvas id="canvas" tabindex="0"></canvas>
+      <div id="reviewStageCard" class="review-stage-card" hidden aria-live="off">
+        <div id="reviewStageHeading" class="review-stage-heading"></div>
+        <div class="review-stage-value">
+          <span class="review-stage-role" style="color:#fbbf24">LABEL</span>
+          <span id="reviewStageGT" class="review-stage-name"></span>
+        </div>
+        <div class="review-stage-value">
+          <span class="review-stage-role" style="color:#22d3ee">MODEL</span>
+          <span id="reviewStagePred" class="review-stage-name"></span>
+        </div>
+        <div id="reviewStageMeta" class="review-stage-meta"></div>
+      </div>
 
 
       <section id="welcomeScreen" class="welcome-screen" aria-label="Welcome to CV Waste Web">
@@ -561,6 +625,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
     <b>Q/A / E/D / ←/→</b> = previous/next image<br>
     <b>Y</b> = run LiteRT YOLO · <b>Alt/AltGr+click</b> = add best prediction containing the point<br><br>
     <b>Detection:</b> <b>N</b> = new box, then drag · drag yellow corner handles = resize<br>
+    <b>Review:</b> choose <b>Task → Review</b>, open the working folder and load the audit CSV from the updated Python audit script. Click a finding to highlight its prediction (cyan); other flagged predictions are magenta. The dashed amber box shows its nearest GT at audit time. Click <b>Focus selected finding</b> to zoom to the object. Predictions and class names come from the audit CSV exported by Python using the .pt model; CV Waste does not load .pt models. Predictions are view-only and never saved as labels. Edit BBOX labels, save, then mark the image reviewed.<br>
     <b>Segmentation:</b> choose <b>Click vertices</b> or <b>Freehand drag</b> · <b>N</b> = new polygon<br>
     Click mode: place vertices, <b>Enter</b>/double-click = finish · Drag mode: hold and draw, release = finish · <b>Esc</b> = cancel<br>
     Click a polygon vertex to select/drag it · <b>Insert/I</b> = add midpoint vertex · <b>Backspace</b> = delete selected vertex.<br>
@@ -602,6 +667,8 @@ const els={
  sessionLabelsBtn:$("sessionLabelsBtn"),closeSessionRestoreBtn:$("closeSessionRestoreBtn"),
  undoBtn:$("undoBtn"),helpBtn:$("helpBtn"),
  imageList:$("imageList"),prevBtn:$("prevBtn"),nextBtn:$("nextBtn"),jumpInput:$("jumpInput"),
+ reviewPanel:$("reviewPanel"),loadReviewBtn:$("loadReviewBtn"),reviewFileInput:$("reviewFileInput"),reviewFilter:$("reviewFilter"),reviewSummary:$("reviewSummary"),reviewIssues:$("reviewIssues"),reviewMarkBtn:$("reviewMarkBtn"),reviewUnmarkBtn:$("reviewUnmarkBtn"),reviewExportBtn:$("reviewExportBtn"),reviewShowPred:$("reviewShowPred"),reviewShowGT:$("reviewShowGT"),reviewBoxHint:$("reviewBoxHint"),reviewFocusBtn:$("reviewFocusBtn"),reviewResetViewBtn:$("reviewResetViewBtn"),
+ reviewComparison:$("reviewComparison"),reviewComparisonHeading:$("reviewComparisonHeading"),reviewGtRole:$("reviewGtRole"),reviewGtName:$("reviewGtName"),reviewGtMeta:$("reviewGtMeta"),reviewPredName:$("reviewPredName"),reviewPredMeta:$("reviewPredMeta"),reviewComparisonNote:$("reviewComparisonNote"),reviewStageCard:$("reviewStageCard"),reviewStageHeading:$("reviewStageHeading"),reviewStageGT:$("reviewStageGT"),reviewStagePred:$("reviewStagePred"),reviewStageMeta:$("reviewStageMeta"),
  classSelect:$("classSelect"),annotationHeading:$("annotationHeading"),addBoxBtn:$("addBoxBtn"),deleteBtn:$("deleteBtn"),copyBtn:$("copyBtn"),pasteBtn:$("pasteBtn"),
  segTools:$("segTools"),polyDrawMode:$("polyDrawMode"),polyDrawHint:$("polyDrawHint"),
  polyClickModeBtn:$("polyClickModeBtn"),polyDragModeBtn:$("polyDragModeBtn"),
@@ -644,7 +711,17 @@ let exampleMode=false;
 let exampleLoading=false;
 let preExampleClasses=null;
 let current=-1;
-let projectMode="detect"; // detect | segment
+let projectMode="detect"; // YOLO annotation format: detect | segment
+let reviewTaskSelected=false; // Review is a separate UI task using detection/BBOX labels
+// Review state must be initialized before the first updateTaskUI() call.
+// Otherwise a top-level let/const temporal dead zone prevents startup.
+let reviewActive=false;
+let reviewRows=[];
+let reviewByIndex=new Map();
+let reviewStatuses=new Map();
+let reviewCsvName="suspicious_annotations.csv";
+let reviewVisibleIndices=[];
+let reviewSelectedFinding=0; // Index within current image's CSV findings.
 let classNames=[...COCO];
 let classColors=[];
 let selected=null,multi=new Set(),clipboard=[];
@@ -800,7 +877,7 @@ function regenColors(){classColors=classNames.map((_,i)=>hsvColor(i,classNames.l
 function savePrefs(){
   if(exampleMode)return; // The public demo must not overwrite real-folder preferences.
   localStorage.setItem("avaw_annotator_browser",JSON.stringify({
-    classNames,classColors,projectMode,
+    classNames,classColors,projectMode,taskSelection:reviewTaskSelected?"review":projectMode,
     autoSave:els.autoSave.checked,showConf:els.showConf.checked,
     conf:+els.conf.value,iou:+els.iou.value,simplifyTol:+els.simplifyTol.value,
     polyDrawMode:els.polyDrawMode.value,
@@ -815,6 +892,7 @@ function loadPrefs(){
     if(Array.isArray(p.classNames)&&p.classNames.length)classNames=p.classNames;
     if(Array.isArray(p.classColors)&&p.classColors.length)classColors=p.classColors;else regenColors();
     if(p.projectMode==="segment"||p.projectMode==="detect")projectMode=p.projectMode;
+    reviewTaskSelected=p.taskSelection==="review"&&projectMode==="detect";
     els.autoSave.checked=!!p.autoSave;
     els.showConf.checked=p.showConf!==false;
     if(p.conf)els.conf.value=p.conf;
@@ -850,8 +928,10 @@ function cancelDraftPolygon(removeUndo=true){
   requestDraw();
 }
 function updateTaskUI(){
-  els.taskMode.value=projectMode;
-  els.annotationHeading.textContent=projectMode==="detect"?"Annotation · Detection":"Annotation · Segmentation";
+  els.taskMode.value=reviewTaskSelected?"review":projectMode;
+  els.reviewPanel.classList.toggle("hidden",!reviewTaskSelected);
+  els.reviewStageCard.hidden=!(reviewTaskSelected&&reviewActive&&selectedReviewRow());
+  els.annotationHeading.textContent=reviewTaskSelected?"Annotation · Review (BBOX)":(projectMode==="detect"?"Annotation · Detection":"Annotation · Segmentation");
   els.addBoxBtn.textContent=projectMode==="detect"?"New box":"New polygon";
   els.objectTypeLabel.textContent=projectMode==="detect"?"Boxes":"Polygons";
   els.dedupeBtn.textContent=projectMode==="detect"?"Delete duplicate boxes":"Delete duplicate polygons";
@@ -890,7 +970,7 @@ function setProjectMode(next,{force=false,silent=false}={}){
       `${next==="detect"?"Detection":"Segmentation"}?\n\n`+
       `The currently loaded in-memory annotations will be cleared. Files on disk are not changed until you save.`
     );
-    if(!ok){els.taskMode.value=projectMode;return false}
+    if(!ok){els.taskMode.value=reviewTaskSelected?"review":projectMode;return false}
     for(const r of records){
       r.annotations=[];r.confidences=[];r.dirty=false;
       r.lastSavedAnnotations=[];r.lastSavedConfidences=[];r.pendingLabelText=null;
@@ -899,6 +979,9 @@ function setProjectMode(next,{force=false,silent=false}={}){
 
   cancelDraftPolygon(false);
   projectMode=next;
+  // Reviewing uses BBOX annotations. If a loaded dataset switches to segmentation,
+  // leave the Review task rather than presenting polygon labels as BBOX labels.
+  if(next==="segment"&&reviewTaskSelected){reviewTaskSelected=false;reviewActive=false}
   selected=null;selectedVertex=null;multi.clear();undoStack=[];mode="select";
 
   if(currentModelSource==="repo"&&currentRepoModelTask&&currentRepoModelTask!==projectMode){
@@ -917,7 +1000,34 @@ function setProjectMode(next,{force=false,silent=false}={}){
   if(!silent)status(`Annotation task: ${projectMode==="detect"?"Detection / BBOX":"Segmentation / Polygon"}.`);
   return true;
 }
-els.taskMode.onchange=()=>setProjectMode(els.taskMode.value);
+function setTaskSelection(next){
+  if(next==="review"){
+    // Do not reinterpret polygons as bounding boxes. The existing switch confirmation
+    // protects unsaved/in-memory polygon annotations.
+    if(projectMode!=="detect"&&!setProjectMode("detect")){
+      updateTaskUI();return;
+    }
+    reviewTaskSelected=true;
+    reviewActive=reviewRows.length>0; // retain imported queue when returning to Review
+    updateTaskUI();savePrefs();refreshAll();
+    if(reviewActive){
+      updateReviewVisible();
+      if(reviewVisibleIndices.length&&!reviewVisibleIndices.includes(current))
+        void showRecord(reviewVisibleIndices[0]);
+    }
+    status(reviewActive?"Review task: audit queue restored.":"Review task: open a working folder and load audit CSV.");
+    return;
+  }
+  if(next!=="detect"&&next!=="segment"){updateTaskUI();return}
+  if(next!==projectMode&&!setProjectMode(next)){
+    updateTaskUI();return;
+  }
+  reviewTaskSelected=false;
+  reviewActive=false; // keeps queue data and statuses available for re-entry
+  updateTaskUI();savePrefs();refreshAll();
+  status(`Annotation task: ${next==="detect"?"Detection / BBOX":"Segmentation / Polygon"}.`);
+}
+els.taskMode.onchange=()=>setTaskSelection(els.taskMode.value);
 updateTaskUI();
 
 function updateClassUI(){
@@ -1443,7 +1553,7 @@ async function loadFiles(files,fromDirectory=false){
       lastSavedAnnotations:[],lastSavedConfidences:[]
     }));
 
-    records=newRecords;current=-1;selected=null;selectedVertex=null;multi.clear();undoStack=[];
+    records=newRecords;resetReview();current=-1;selected=null;selectedVertex=null;multi.clear();undoStack=[];
     hideLoading();
     await showRecord(0,false,{immediateLoad:true});
     const restoredPosition=restoreSessionImagePosition();
@@ -1860,6 +1970,294 @@ function discardUnsavedAnnotations(r){
   r.confidences=(r.lastSavedConfidences||[]).slice();
   r.dirty=false;
 }
+
+// REVIEW MODE: indexes existing image records; no images or YOLO annotations are duplicated.
+
+// All CSV xyxy fields are normalized original-image coordinates (0..1).
+// Legacy CSVs without bounding-box columns remain importable as image-only lists.
+function reviewBox(row,prefix){
+  const keys=[`${prefix}_x1`,`${prefix}_y1`,`${prefix}_x2`,`${prefix}_y2`];
+  if(keys.some(k=>row[k]===undefined||String(row[k]).trim()===""))return null;
+  const nums=keys.map(k=>Number(row[k]));
+  if(nums.some(x=>!Number.isFinite(x)||x<0||x>1))return null;
+  const [x1,y1,x2,y2]=nums;
+  return x2>x1&&y2>y1?{x1,y1,x2,y2}:null;
+}
+// Prefer the audited model's names; legacy CSV files fall back to the dataset names.
+// Class IDs are only mapped to dataset names when no model-derived name was provided.
+function reviewClassName(row, prefix){
+  const id=Number(row?.[`${prefix}_class`]);
+  if(!Number.isInteger(id)||id<0)return "No matching GT";
+  const exported=String(row?.[`${prefix}_name`]??"").trim();
+  if(exported)return exported;
+  return String(classNames[id]??`Class ${id}`);
+}
+function reviewClassText(row,prefix){
+  const id=Number(row?.[`${prefix}_class`]);
+  if(!Number.isInteger(id)||id<0)return "No matching GT";
+  return `${reviewClassName(row,prefix)} [${id}]`;
+}
+function selectedReviewRow(){
+  const rows=reviewActive?(reviewByIndex.get(current)||[]):[];
+  return rows[reviewSelectedFinding]||rows[0]||null;
+}
+function selectReviewFinding(idx){
+  const entries=reviewActive?(reviewByIndex.get(current)||[]):[];
+  if(idx<0||idx>=entries.length)return;
+  reviewSelectedFinding=idx;
+  updateReviewUI();requestDraw();
+}
+function focusSelectedReviewFinding(){
+  const r=rec(),row=selectedReviewRow();
+  const bounds=row&&reviewBox(row,"pred");
+  if(!r||!bounds)return;
+  const rect=els.stage.getBoundingClientRect();
+  if(!rect.width||!rect.height)return;
+  const bw=(bounds.x2-bounds.x1)*r.width,bh=(bounds.y2-bounds.y1)*r.height;
+  // Keep generous context around the suspect object; no label changes.
+  const targetScale=Math.min(rect.width/Math.max(bw*2.8,1),rect.height/Math.max(bh*2.8,1));
+  zoom=Math.min(8,Math.max(1,targetScale/fitScale));
+  const centerX=(bounds.x1+bounds.x2)*r.width/2;
+  const centerY=(bounds.y1+bounds.y2)*r.height/2;
+  offsetX=rect.width/2-centerX*fitScale*zoom;
+  offsetY=rect.height/2-centerY*fitScale*zoom;
+  requestDraw();
+}
+
+function reviewBaseName(path){return String(path||"").replace(/\\/g,"/").split("/").pop().toLowerCase()}
+function parseReviewCSV(text){
+  // Quoted RFC4180 fields, escaped quotes and Windows paths supported.
+  text=String(text).replace(/^\uFEFF/,"");
+  const out=[];let row=[],field="",quoted=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(c==='"'){
+      if(quoted&&text[i+1]==='"'){field+='"';i++}else quoted=!quoted;
+    }else if(c===","&&!quoted){row.push(field);field=""}
+    else if((c==="\n"||c==="\r")&&!quoted){
+      if(c==="\r"&&text[i+1]==="\n")i++;
+      row.push(field);if(row.some(x=>x.trim()!==""))out.push(row);
+      row=[];field="";
+    }else field+=c;
+  }
+  if(quoted)throw new Error("Malformed CSV: unclosed quote.");
+  row.push(field);if(row.some(x=>x.trim()!==""))out.push(row);
+  if(!out.length)return [];
+  const head=out.shift().map(x=>x.trim().toLowerCase());
+  for(const req of ["image","issue","confidence"]){if(!head.includes(req))throw new Error(`CSV column missing: ${req}`)}
+  return out.map((cells,n)=>{
+    const item={};head.forEach((k,i)=>item[k]=(cells[i]||"").trim());
+    item.__line=n+2;return item;
+  }).filter(r=>r.image);
+}
+function reviewStorageKey(){return `cvwaste-review-v1:${directoryHandle?.name||"unknown"}:${reviewCsvName}`}
+function persistReview(){
+  try{localStorage.setItem(reviewStorageKey(),JSON.stringify([...reviewStatuses]))}
+  catch(e){console.warn("Review status local persistence unavailable",e)}
+}
+function resetReview(){
+  reviewActive=false;reviewRows=[];reviewByIndex=new Map();reviewStatuses=new Map();reviewVisibleIndices=[];
+  reviewSelectedFinding=0;
+  els.reviewFileInput.value="";updateReviewUI();renderImageList();refreshProgress();
+}
+function buildReviewIndex(){
+  reviewByIndex=new Map();
+  const byName=new Map();
+  records.forEach((r,i)=>{const key=reviewBaseName(r.name);if(!byName.has(key))byName.set(key,[]);byName.get(key).push(i)});
+  let unmatched=0,ambiguous=0;
+  for(const row of reviewRows){
+    const matches=byName.get(reviewBaseName(row.image))||[];
+    if(matches.length!==1){if(matches.length===0)unmatched++;else ambiguous++;continue}
+    const index=matches[0];
+    if(!reviewByIndex.has(index))reviewByIndex.set(index,[]);
+    reviewByIndex.get(index).push(row);
+  }
+  return {unmatched,ambiguous};
+}
+function updateReviewVisible(){
+  if(!reviewActive){reviewVisibleIndices=records.map((_,i)=>i);return}
+  const filter=els.reviewFilter.value;
+  reviewVisibleIndices=[...reviewByIndex.keys()].filter(i=>{
+    const done=reviewStatuses.get(records[i].name)==="reviewed";
+    return filter==="all"||(filter==="reviewed"?done:!done);
+  }).sort((a,b)=>{
+    const max=x=>Math.max(0,...(reviewByIndex.get(x)||[]).map(r=>Number(r.confidence)||0));
+    const aMismatch=(reviewByIndex.get(a)||[]).some(r=>r.issue==="CLASS_MISMATCH")?1:0;
+    const bMismatch=(reviewByIndex.get(b)||[]).some(r=>r.issue==="CLASS_MISMATCH")?1:0;
+    return bMismatch-aMismatch||max(b)-max(a)||a-b;
+  });
+}
+function reviewNextIndex(from,step=1){
+  updateReviewVisible();if(!reviewVisibleIndices.length)return -1;
+  const at=reviewVisibleIndices.indexOf(from);
+  if(at!==-1)return reviewVisibleIndices[at+step]??-1;
+  const naturalIndex=reviewVisibleIndices.findIndex(i=>i>from);
+  if(step>0)return reviewVisibleIndices[naturalIndex>=0?naturalIndex:0];
+  return reviewVisibleIndices[Math.max(0,naturalIndex-1)]??reviewVisibleIndices[reviewVisibleIndices.length-1];
+}
+function reviewIssueTitle(row){
+  if(row?.issue==="CLASS_MISMATCH")return "CLASS DISAGREEMENT";
+  if(row?.issue==="POSSIBLE_MISSING_LABEL")return "POSSIBLY UNLABELED OBJECT";
+  if(row?.issue==="MISSING_OR_BAD_BOX")return "BOX LOCATION / MATCH UNCERTAIN";
+  return String(row?.issue||"AUDIT FINDING").replaceAll("_"," ");
+}
+function reviewBrief(row){
+  const issue=row?.issue;
+  if(issue==="CLASS_MISMATCH")return "The model disagrees with the saved label. Inspect the object: the model can also be wrong.";
+  if(issue==="POSSIBLE_MISSING_LABEL")return "The model detected an object with no ground-truth match. Check whether an annotation is missing.";
+  if(issue==="MISSING_OR_BAD_BOX")return "This prediction does not closely match an annotation. Check the box location and nearby objects.";
+  return "Check the indicated object before changing the annotation.";
+}
+function updateReviewComparison(selected,position,total){
+  const show=Boolean(reviewTaskSelected&&reviewActive&&selected);
+  els.reviewComparison.hidden=!show;
+  els.reviewStageCard.hidden=!show;
+  if(!show)return;
+  const labelName=selected.issue==="POSSIBLE_MISSING_LABEL"?"No matching label":reviewClassName(selected,"gt");
+  const predName=reviewClassName(selected,"pred");
+  const rawGt=Number(selected.gt_class),rawPred=Number(selected.pred_class);
+  const gtId=Number.isInteger(rawGt)&&rawGt>=0?`Class ID ${rawGt}`:"Not annotated";
+  const predId=Number.isInteger(rawPred)&&rawPred>=0?`Class ID ${rawPred}`:"Unknown class";
+  const confidence=Number(selected.confidence);
+  const confidenceText=Number.isFinite(confidence)?`${(confidence*100).toFixed(1)}% confidence`:"Confidence unavailable";
+  const iou=Number(selected.iou);
+  const iouText=Number.isFinite(iou)?` · IoU ${iou.toFixed(2)}`:"";
+  const heading=`${reviewIssueTitle(selected)} · ${position}/${total}`;
+  els.reviewComparisonHeading.textContent=heading;
+  els.reviewGtRole.textContent=selected.issue==="MISSING_OR_BAD_BOX"?"NEAREST ANNOTATION · NOT A MATCH":"ANNOTATION · GROUND TRUTH";
+  els.reviewGtName.textContent=labelName;
+  els.reviewGtMeta.textContent=gtId;
+  els.reviewPredName.textContent=predName;
+  els.reviewPredMeta.textContent=`${predId} · ${confidenceText}${iouText}`;
+  els.reviewComparisonNote.textContent=reviewBrief(selected);
+  els.reviewStageHeading.textContent=heading;
+  els.reviewStageGT.textContent=labelName;
+  els.reviewStagePred.textContent=`${predName} · ${confidenceText}`;
+  els.reviewStageMeta.textContent="Amber dashed = audit label · Cyan solid = selected model box";
+}
+function updateReviewUI(){
+  els.reviewExportBtn.disabled=!reviewActive;
+  const flagged=reviewByIndex.size;
+  const completed=[...reviewByIndex.keys()].filter(i=>reviewStatuses.get(records[i].name)==="reviewed").length;
+  const issues=[...reviewByIndex.values()].reduce((n,x)=>n+x.length,0);
+  if(reviewActive){
+    updateReviewVisible();
+    els.reviewSummary.textContent=`${completed}/${flagged} images reviewed · ${issues} findings · ${reviewVisibleIndices.length} shown`;
+  }else els.reviewSummary.textContent="Load the working folder, then import suspicious_annotations.csv.";
+  const entries=reviewActive?(reviewByIndex.get(current)||[]):[];
+  if(reviewSelectedFinding>=entries.length)reviewSelectedFinding=0;
+  const selected=entries[reviewSelectedFinding]||null;
+  updateReviewComparison(selected,Math.min(reviewSelectedFinding+1,entries.length),entries.length);
+  const coordinatesAvailable=!!(selected&&reviewBox(selected,"pred"));
+  els.reviewFocusBtn.disabled=!coordinatesAvailable;
+  els.reviewResetViewBtn.disabled=!rec()?.bitmap;
+  els.reviewMarkBtn.disabled=!entries.length||reviewStatuses.get(rec()?.name)==="reviewed";
+  els.reviewUnmarkBtn.disabled=!entries.length||reviewStatuses.get(rec()?.name)!=="reviewed";
+  els.reviewIssues.replaceChildren();
+  if(entries.length){
+    const boxes=entries.filter(r=>reviewBox(r,"pred")).length;
+    els.reviewBoxHint.textContent=boxes
+      ?`${boxes}/${entries.length} predictions · solid cyan: selected · dashed amber: audit annotation. Shift-click a predicted box to select it.`
+      :"This CSV has no prediction coordinates. Re-run audit_dataset_review.py and import its CSV.";
+    const title=document.createElement("div");title.style.marginBottom="5px";
+    title.textContent=`${entries.length} finding(s) · ${reviewStatuses.get(rec()?.name)==="reviewed"?"REVIEWED":"PENDING"}`;
+    els.reviewIssues.appendChild(title);
+    entries.forEach((row,i)=>{
+      const line=document.createElement("button");
+      line.type="button";
+      const active=i===reviewSelectedFinding;
+      line.className="review-finding-btn"+(active?" review-selected":"");
+      const title=document.createElement("span");title.className="review-finding-title";
+      title.textContent=`${active?"▶ ":""}#${i+1} ${reviewIssueTitle(row)}`;
+      const sub=document.createElement("span");sub.className="review-finding-sub";
+      const confidence=Number(row.confidence);
+      const conf=Number.isFinite(confidence)?`${(confidence*100).toFixed(0)}%`:"—";
+      sub.textContent=`${reviewClassName(row,"gt")} → ${reviewClassName(row,"pred")} · ${conf}`;
+      line.append(title,sub);
+      line.title="Select this finding to highlight its predicted bounding box.";
+      line.onclick=()=>selectReviewFinding(i);
+      els.reviewIssues.appendChild(line);
+    });
+  }else{
+    els.reviewBoxHint.textContent="Select an image with audit findings.";
+    if(reviewActive)els.reviewIssues.textContent="Current image is not flagged.";
+  }
+}
+async function importReview(file){
+  if(!records.length){status("Open the image working folder before importing an audit CSV.");return}
+  const parsed=parseReviewCSV(await file.text());
+  if(!parsed.length)throw new Error("CSV has no findings.");
+  reviewRows=parsed;reviewCsvName=file.name;reviewActive=reviewTaskSelected;
+  reviewSelectedFinding=0;
+  const {unmatched,ambiguous}=buildReviewIndex();
+  reviewStatuses=new Map();
+  try{
+    const saved=JSON.parse(localStorage.getItem(reviewStorageKey())||"[]");
+    if(Array.isArray(saved))reviewStatuses=new Map(saved);
+  }catch(e){console.warn("Could not load saved review progress",e)}
+  for(const r of reviewRows){
+    if(r.review_status&&r.review_status.toLowerCase()==="reviewed"){
+      const name=reviewBaseName(r.image);
+      for(const i of reviewByIndex.keys()){
+        if(reviewBaseName(records[i].name)===name)reviewStatuses.set(records[i].name,"reviewed");
+      }
+    }
+  }
+  els.reviewFilter.value="pending";
+  updateReviewUI();renderImageList();refreshProgress();
+  const first=reviewVisibleIndices[0];
+  if(first!==undefined)await showRecord(first,true,{immediateLoad:true});
+  status(`Review loaded: ${reviewRows.length} findings in ${reviewByIndex.size} images. ${unmatched} missing rows, ${ambiguous} ambiguous rows.`);
+}
+function csvValue(s){
+  const v=String(s??"");return /[",\r\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;
+}
+function exportReviewCSV(){
+  if(!reviewActive)return;
+  // Preserve coordinates and any future audit fields on progress export.
+  const keys=[...new Set([...reviewRows.flatMap(r=>Object.keys(r).filter(k=>!k.startsWith("__"))),"review_status"])];
+  const rows=reviewRows.map(r=>{
+    const matching=[...reviewByIndex.keys()].find(i=>reviewBaseName(records[i].name)===reviewBaseName(r.image));
+    const result=matching===undefined?"unmatched":(reviewStatuses.get(records[matching].name)||"pending");
+    return {...r,review_status:result};
+  });
+  const content="\uFEFF"+keys.join(",")+"\r\n"+rows.map(r=>keys.map(k=>csvValue(r[k])).join(",")).join("\r\n")+"\r\n";
+  downloadBlob(new Blob([content],{type:"text/csv;charset=utf-8"}),"review_progress.csv");
+  status("Review progress CSV exported.");
+}
+els.loadReviewBtn.onclick=()=>{els.reviewFileInput.value="";els.reviewFileInput.click()};
+els.reviewFileInput.onchange=async()=>{
+  const file=els.reviewFileInput.files?.[0];if(!file)return;
+  try{await importReview(file)}catch(e){status(`Review CSV import failed: ${e.message}`)}
+};
+els.reviewFilter.onchange=()=>{
+  updateReviewUI();renderImageList();refreshProgress();
+  if(reviewVisibleIndices.length&&!reviewVisibleIndices.includes(current))showRecord(reviewVisibleIndices[0]);
+};
+els.reviewMarkBtn.onclick=async()=>{
+  const r=rec();if(!r||!reviewByIndex.has(current))return;
+  if(r.dirty){const ok=await saveCurrent(false);if(!ok){status("Save the annotation before marking reviewed.");return}}
+  // Choose the next item in the review ordering before changing the filter.
+  updateReviewVisible();
+  const oldPos=reviewVisibleIndices.indexOf(current);
+  const preferredNext=reviewVisibleIndices[oldPos+1]??reviewVisibleIndices[oldPos-1];
+  reviewStatuses.set(r.name,"reviewed");persistReview();
+  updateReviewUI();renderImageList();refreshProgress();
+  const nextIndex=reviewVisibleIndices.includes(preferredNext)?preferredNext:reviewVisibleIndices[0];
+  if(nextIndex!==undefined&&nextIndex!==current)await showRecord(nextIndex);
+  status(`Reviewed ${r.name}. Progress is stored in this browser; export review CSV for a portable record.`);
+};
+els.reviewUnmarkBtn.onclick=()=>{
+  const r=rec();if(!r)return;
+  reviewStatuses.delete(r.name);persistReview();updateReviewUI();renderImageList();refreshProgress();
+  status(`Reopened review for ${r.name}.`);
+};
+els.reviewExportBtn.onclick=exportReviewCSV;
+els.reviewShowPred.onchange=requestDraw;
+els.reviewShowGT.onchange=requestDraw;
+els.reviewFocusBtn.onclick=focusSelectedReviewFinding;
+els.reviewResetViewBtn.onclick=resetView;
+
 let navigationSequence=0;
 async function showRecord(idx,doAuto=true,{immediateLoad=false}={}){
   if(idx<0||idx>=records.length)return;
@@ -1885,29 +2283,58 @@ async function showRecord(idx,doAuto=true,{immediateLoad=false}={}){
   if(navId!==navigationSequence)return;
 
   cancelDraftPolygon(false);
+  if(current!==idx)reviewSelectedFinding=0;
   current=idx;selected=null;selectedVertex=null;multi.clear();undoStack=[];mode="select";
   els.addBoxBtn.classList.remove("active");
   resetView();refreshAll();
   if(Math.abs(viewGamma-1)>1e-6)scheduleGammaRender(target);
   prefetchNextImage(idx);
 }
-function next(){if(current+1<records.length)showRecord(current+1)}
-function prev(){if(current>0)showRecord(current-1)}
+function next(){
+  if(reviewActive){const i=reviewNextIndex(current,1);if(i>=0)showRecord(i)}
+  else if(current+1<records.length)showRecord(current+1);
+}
+function prev(){
+  if(reviewActive){const i=reviewNextIndex(current,-1);if(i>=0)showRecord(i)}
+  else if(current>0)showRecord(current-1);
+}
 els.nextBtn.onclick=next;els.prevBtn.onclick=prev;
 els.jumpInput.onchange=()=>{const i=+els.jumpInput.value;if(i>=0&&i<records.length)showRecord(i)};
 function renderImageList(){
   els.imageList.innerHTML="";
-  records.forEach((r,i)=>{
+  if(reviewActive)updateReviewVisible();
+  const indices=reviewActive?reviewVisibleIndices:records.map((_,i)=>i);
+  for(const i of indices){
+    const r=records[i];
     const d=document.createElement("div");d.className="item"+(i===current?" selected":"");
-    d.innerHTML=`<span class="badge">${i}</span><span class="ellipsis">${r.name}${r.dirty?" *":""}</span>`;
+    const num=document.createElement("span");num.className="badge";num.textContent=String(i);
+    const label=document.createElement("span");label.className="ellipsis";
+    label.textContent=r.name+(r.dirty?" *":"");
+    d.append(num,label);
+    if(reviewActive){
+      const n=document.createElement("span");n.className="badge";
+      n.textContent=String((reviewByIndex.get(i)||[]).length);
+      n.title="Audit findings";d.append(n);
+    }
     d.onclick=()=>showRecord(i);els.imageList.appendChild(d);
-  });
+  }
+  updateReviewUI();
 }
 function refreshProgress(){
-  els.counter.textContent=records.length?`${current}/${records.length-1}`:"0/0";
-  els.jumpInput.value=Math.max(0,current);
-  els.jumpInput.max=Math.max(0,records.length-1);
-  els.progressBar.style.width=records.length>1?`${100*current/(records.length-1)}%`:records.length?"100%":"0%";
+  if(reviewActive){
+    updateReviewVisible();
+    const pos=reviewVisibleIndices.indexOf(current);
+    els.counter.textContent=`${pos>=0?pos+1:0}/${reviewVisibleIndices.length} review images`;
+    els.jumpInput.value=Math.max(0,current);
+    els.jumpInput.max=Math.max(0,records.length-1);
+    const done=[...reviewByIndex.keys()].filter(i=>reviewStatuses.get(records[i].name)==="reviewed").length;
+    els.progressBar.style.width=reviewByIndex.size?`${100*done/reviewByIndex.size}%`:"0%";
+  }else{
+    els.counter.textContent=records.length?`${current}/${records.length-1}`:"0/0";
+    els.jumpInput.value=Math.max(0,current);
+    els.jumpInput.max=Math.max(0,records.length-1);
+    els.progressBar.style.width=records.length>1?`${100*current/(records.length-1)}%`:records.length?"100%":"0%";
+  }
 }
 
 function pushUndo(){
@@ -2414,6 +2841,48 @@ new ResizeObserver(resizeCanvas).observe(els.stage);
 function requestDraw(){
   if(redrawPending)return;redrawPending=true;requestAnimationFrame(()=>{redrawPending=false;draw()});
 }
+function drawReviewPredictions(x,r,s,ox,oy){
+  if(!reviewTaskSelected||!reviewActive||!r)return;
+  const rows=reviewByIndex.get(current)||[];
+  if(!rows.length)return;
+  const selectedRow=rows[reviewSelectedFinding]||rows[0];
+  x.save();
+  // Other flagged predictions are subtle. No class labels are painted onto the
+  // crowded image; the persistent compare card shows the complete information.
+  if(els.reviewShowPred.checked){
+    rows.forEach((row,i)=>{
+      if(i===reviewSelectedFinding)return;
+      const b=reviewBox(row,"pred");if(!b)return;
+      const X=ox+b.x1*r.width*s,Y=oy+b.y1*r.height*s;
+      const W=(b.x2-b.x1)*r.width*s,H=(b.y2-b.y1)*r.height*s;
+      x.strokeStyle="rgba(232,121,249,.52)";x.lineWidth=1.7;
+      x.setLineDash([5,5]);x.strokeRect(X,Y,W,H);
+    });
+  }
+  // The GT snapshot is an audit-time reference, NOT a model prediction. It is
+  // read-only and intentionally distinguishable by stroke pattern and color.
+  if(els.reviewShowGT.checked){
+    const b=reviewBox(selectedRow,"gt");
+    if(b){
+      const X=ox+b.x1*r.width*s,Y=oy+b.y1*r.height*s;
+      const W=(b.x2-b.x1)*r.width*s,H=(b.y2-b.y1)*r.height*s;
+      x.strokeStyle="#fbbf24";x.lineWidth=3;
+      x.setLineDash([9,6]);x.strokeRect(X,Y,W,H);
+      x.setLineDash([]);
+    }
+  }
+  if(els.reviewShowPred.checked){
+    const b=reviewBox(selectedRow,"pred");
+    if(b){
+      const X=ox+b.x1*r.width*s,Y=oy+b.y1*r.height*s;
+      const W=(b.x2-b.x1)*r.width*s,H=(b.y2-b.y1)*r.height*s;
+      x.strokeStyle="rgba(5,9,18,.95)";x.lineWidth=6;x.strokeRect(X,Y,W,H);
+      x.strokeStyle="#22d3ee";x.lineWidth=3.5;x.strokeRect(X,Y,W,H);
+    }
+  }
+  x.setLineDash([]);x.restore();
+}
+
 function draw(){
   const rect=els.stage.getBoundingClientRect();
   ctx.clearRect(0,0,rect.width,rect.height);ctx.fillStyle="#050608";ctx.fillRect(0,0,rect.width,rect.height);
@@ -2430,6 +2899,7 @@ function draw(){
   ctx.drawImage(currentImageViewSource(r),offsetX,offsetY,r.width*s,r.height*s);
   ctx.restore();
   drawAnnotationsToContext(ctx,r,s,offsetX,offsetY,true);
+  drawReviewPredictions(ctx,r,s,offsetX,offsetY);
   if(projectMode==="segment"&&mode==="vertexInsert")drawVertexInsertionPreview(rect);
 
   if(marquee){
@@ -2498,10 +2968,10 @@ function drawBoxesToContext(x,r,s,ox,oy,interactive){
     const [cl,x1,y1,x2,y2]=a,color=hex(classColors[cl]||[128,128,128]);
     const X=ox+x1*s,Y=oy+y1*s,W=(x2-x1)*s,H=(y2-y1)*s,isSel=i===selected||multi.has(i);
     x.strokeStyle=isSel?getComputedStyle(document.documentElement).getPropertyValue("--sel").trim():color;
-    x.lineWidth=isSel?3:2;x.strokeRect(X,Y,W,H);
+    x.lineWidth=isSel?3:(reviewTaskSelected&&reviewActive&&interactive?1.25:2);x.strokeRect(X,Y,W,H);
     const name=classNames[cl]??`Class ${cl}`,cf=r.confidences[i];
     let lab=`${cl}: ${name}`;if(els.showConf.checked&&cf!==null&&cf!==undefined)lab+=` ${typeof cf==="number"?cf.toFixed(2):cf}`;
-    drawAnnotationLabel(x,lab,X,Y,color);
+    if(!(interactive&&reviewTaskSelected&&reviewActive))drawAnnotationLabel(x,lab,X,Y,color);
     if(interactive&&i===selected){
       // Keep resize handles a constant on-screen size, independent of image dimensions/zoom.
       const hs=10;for(const [cx,cy] of [[X,Y],[X+W,Y],[X,Y+H],[X+W,Y+H]]){x.fillStyle="#facc15";x.fillRect(cx-hs/2,cy-hs/2,hs,hs)}
@@ -2750,6 +3220,18 @@ els.canvas.onpointerdown=async ev=>{
     return;
   }
   if(ev.button!==0)return;
+  if(reviewTaskSelected&&reviewActive&&ev.shiftKey){
+    // Select the smallest flagged prediction containing the click. Shift-click
+    // prevents any ground-truth annotation edits.
+    const rows=reviewByIndex.get(current)||[];
+    const inside=rows.map((row,i)=>({i,b:reviewBox(row,"pred")})).filter(o=>o.b&&
+      ip.x/r.width>=o.b.x1&&ip.x/r.width<=o.b.x2&&
+      ip.y/r.height>=o.b.y1&&ip.y/r.height<=o.b.y2);
+    inside.sort((a,b)=>((a.b.x2-a.b.x1)*(a.b.y2-a.b.y1))-((b.b.x2-b.b.x1)*(b.b.y2-b.b.y1)));
+    if(inside.length){selectReviewFinding(inside[0].i);status(`Selected review finding #${inside[0].i+1}.`)}
+    else status("No flagged model prediction at that location.");
+    return;
+  }
   if(hasSingleClickPredictionModifier(ev)){await singleClickPrediction(ip.x,ip.y);return}
 
   if(projectMode==="segment"&&mode==="vertexInsert"){
@@ -3612,7 +4094,7 @@ setSaveDirectory(null);
 updateTaskUI();
 resizeCanvas();refreshAll();
 setModelState("idle","Select a local or repository .tflite model.");
-status("Ready · Build 2026-10-20. Choose Detection or Segmentation, then open a working folder.");
+status("Ready · Choose Detection, Segmentation or Review from Task, then open a working folder.");
 renderRepoModelOptions();
 </script>
 </body>
