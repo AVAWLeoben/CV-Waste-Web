@@ -358,7 +358,7 @@ class AuditGUI:
         self.output_var = tk.StringVar(value=str(Path.cwd()))
         self.conf_var = tk.StringVar(value="0.80")
         self.iou_var = tk.StringVar(value="0.50")
-        self.allow_low_coverage_var = tk.BooleanVar(value=False)
+        self.allow_low_coverage_var = tk.BooleanVar(value=True)
         self.status_var = tk.StringVar(value="Ready. Select the folders and start the audit.")
         self.csv_name_var = tk.StringVar()
         self.image_var.trace_add("write", self._update_csv_filename)
@@ -395,7 +395,7 @@ class AuditGUI:
         self.inputs.extend([conf_entry, iou_entry])
         coverage_box = ttk.Checkbutton(
             options,
-            text="Allow low label coverage (audit labeled images only)",
+            text="Skip unannotated/background images (audit labeled only)",
             variable=self.allow_low_coverage_var,
         )
         coverage_box.pack(side="left", padx=(25, 0))
