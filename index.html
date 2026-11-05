@@ -292,6 +292,32 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
 }
 @media(prefers-reduced-motion:reduce){.welcome-cta{transition:none}}
 
+
+/* Desktop companion: discreet third option below the primary web workflows. */
+.welcome-studio{
+  width:min(100%,550px);display:flex;align-items:center;justify-content:space-between;
+  gap:15px;margin-top:17px;padding:13px 14px;border:1px solid #355064;
+  background:linear-gradient(120deg,rgba(22,47,64,.85),rgba(15,32,46,.9));
+  border-radius:9px
+}
+.welcome-studio-copy{min-width:0;display:flex;flex-direction:column;gap:3px}
+.welcome-studio-copy strong{font-size:13px;line-height:1.3;font-weight:690;color:#f3faff}
+.welcome-studio-copy small{font-size:11px;color:#b1c3d1;line-height:1.35}
+.welcome-studio-link{
+  display:inline-flex;flex:0 0 auto;align-items:center;justify-content:center;gap:8px;
+  min-height:40px;padding:9px 12px;border:1px solid #6dcaef;border-radius:7px;
+  background:#14618b;color:#fff;text-decoration:none;font-size:12px;font-weight:720;
+  white-space:nowrap;transition:background .16s ease,transform .16s ease
+}
+.welcome-studio-link:hover{background:#1976a8;transform:translateY(-1px)}
+.welcome-studio-link:focus-visible{outline:2px solid #bae6fd;outline-offset:3px}
+.welcome-studio-link svg{width:17px;height:17px;flex:0 0 17px}
+@container (max-width:560px){
+  .welcome-studio{flex-direction:column;align-items:stretch;gap:10px;max-width:310px}
+  .welcome-studio-link{width:100%}
+}
+@media(prefers-reduced-motion:reduce){.welcome-studio-link{transition:none}}
+
 .hidden{display:none!important}
 @media(max-width:1000px){.main{grid-template-columns:180px minmax(0,1fr) 250px}}
 @media(max-width:760px){body{overflow:auto}.app{height:auto;min-height:100vh}.main{grid-template-columns:1fr}.stageWrap{height:60vh;order:-1}.sidebar,.right{border:0;border-top:1px solid var(--border)}.welcome-screen{align-items:flex-start}.welcome-content{justify-content:flex-start}}
@@ -531,6 +557,24 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
                   </button>
                   <div class="welcome-hint welcome-demo-note" aria-hidden="true"><svg viewBox="0 0 40 30"><path d="M37 27C23 27 19 17 11 4M11 4l0 9m0-9 9 4"/></svg><span>Try repository images<br>without saving to disk</span></div>
                 </div>
+              </div>
+
+              <div class="welcome-studio" aria-label="CV Waste Studio cross-platform download">
+                <div class="welcome-studio-copy">
+                  <strong>CV Waste Studio · Cross-platform</strong>
+                  <small id="studioReleaseInfo" aria-live="polite">Latest platform-independent release on GitHub</small>
+                </div>
+                <a id="studioDownloadLink" class="welcome-studio-link"
+                   href="https://github.com/AVAWLeoben/CV-Waste-Tools/releases"
+                   target="_blank" rel="noopener noreferrer"
+                   aria-label="Get CV Waste Studio from GitHub Releases">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                       stroke-linecap="round" stroke-linejoin="round" stroke-width="1.9" aria-hidden="true">
+                    <path d="M12 3v12m0 0 4-4m-4 4-4-4"/>
+                    <path d="M5 16v4h14v-4"/>
+                  </svg>
+                  <span id="studioDownloadLabel">Get CV Waste Studio</span>
+                </a>
               </div>
               <p class="welcome-session-line">Returning to a project? <button id="welcomeLoadSessionBtn" class="welcome-session" type="button">Load a saved session</button></p>
             </div>
@@ -4320,6 +4364,74 @@ resizeCanvas();refreshAll();
 setModelState("idle","Select a local or repository .tflite model.");
 status("Ready · Choose Detection, Segmentation or Review from Task, then open a working folder.");
 renderRepoModelOptions();
+</script>
+
+<script>
+/* Resolve the latest published release without OS or browser detection.
+   Only link directly to platform-independent Studio archives. Otherwise
+   send visitors to the release page instead of guessing a package. */
+(() => {
+  const repo = "AVAWLeoben/CV-Waste-Tools";
+  const releasesUrl = `https://github.com/${repo}/releases`;
+  const latestUrl = `${releasesUrl}/latest`;
+  const button = document.getElementById("studioDownloadLink");
+  const label = document.getElementById("studioDownloadLabel");
+  const info = document.getElementById("studioReleaseInfo");
+  if (!button || !label || !info) return;
+
+  // Prefer a portable ZIP/TAR archive or a Python zipapp; never select OS builds.
+  const archiveExtension = /\.(?:zip|tar\.gz|tgz|pyz)$/i;
+  const osSpecific = /(?:^|[._\- ])(?:windows|win32|win64|macos|darwin|osx|linux|ubuntu|arm64|aarch64|x86|x64|amd64)(?:[._\- ]|$)/i;
+  const excluded = /(?:checksum|sha256|signature|debug|symbols)/i;
+
+  async function resolveStudioDownload() {
+    try {
+      const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+        headers: { Accept: "application/vnd.github+json" },
+        cache: "no-store"
+      });
+      if (!response.ok) throw new Error(`GitHub API: ${response.status}`);
+      const release = await response.json();
+      const assets = (Array.isArray(release.assets) ? release.assets : [])
+        .filter(asset => {
+          const name = String(asset.name || "");
+          return /studio/i.test(name) && archiveExtension.test(name) &&
+                 !osSpecific.test(name) && !excluded.test(name) &&
+                 /^https:\/\/github\.com\/AVAWLeoben\/CV-Waste-Tools\/releases\/download\//i.test(String(asset.browser_download_url || ""));
+        })
+        .sort((a, b) => {
+          const score = asset => {
+            const name = String(asset.name || "");
+            return (/portable|universal|cross[-_. ]?platform|all[-_. ]?platforms/i.test(name) ? 10 : 0) +
+                   (/\.zip$/i.test(name) ? 3 : /\.pyz$/i.test(name) ? 2 : 1);
+          };
+          return score(b) - score(a);
+        });
+
+      const version = typeof release.tag_name === "string" ? release.tag_name.trim() : "";
+      if (assets.length) {
+        button.href = assets[0].browser_download_url;
+        button.setAttribute("aria-label", `Download CV Waste Studio ${version || "latest"} (cross-platform)`);
+        label.textContent = "Download CV Waste Studio";
+        info.textContent = `${version || "Latest release"} · Cross-platform archive · GitHub`;
+      } else {
+        button.href = typeof release.html_url === "string" &&
+          release.html_url.startsWith(`https://github.com/${repo}/releases/`)
+          ? release.html_url : latestUrl;
+        button.setAttribute("aria-label", "View CV Waste Studio release on GitHub");
+        label.textContent = "View Studio release";
+        info.textContent = `${version || "Latest release"} · Download from GitHub`;
+      }
+    } catch (error) {
+      // Also handles private repositories, no published release and API rate limits.
+      button.href = releasesUrl;
+      button.setAttribute("aria-label", "Get CV Waste Studio from GitHub Releases");
+      label.textContent = "Get CV Waste Studio";
+      info.textContent = "Cross-platform app · GitHub Releases";
+    }
+  }
+  resolveStudioDownload();
+})();
 </script>
 </body>
 </html>
