@@ -706,7 +706,7 @@ dialog textarea{width:100%;min-height:120px;padding:8px}
   </div>
 </dialog>
 
-<script>
+<script type="module">
 "use strict";
 
 const COCO=["person","bicycle","car","motorcycle","airplane","bus","train","truck","boat","traffic light",
@@ -1210,7 +1210,7 @@ els.openDirBtn.onclick=async()=>{
   const oldDirectory=directoryHandle,oldLabelsDirectory=labelsDirectoryHandle,oldSaveDirectory=saveDirectoryHandle;
   const oldLabelsSource=labelsSourceName,wasExample=exampleMode;
   try{
-    if(!window.showDirectoryPicker)throw new Error("Directory picker unavailable. Open in Chrome or Edge using localhost or HTTPS.");
+    if(!window.showDirectoryPicker)throw new Error("Directory picker unavailable. Use a Chromium-based browser with folder access support.");
     const newDirectory=await showDirectoryPicker({mode:"readwrite"});
     showLoading("Scanning image folder…",newDirectory.name);
     const files=await filesFromDirectory(newDirectory);
@@ -1227,7 +1227,7 @@ els.openDirBtn.onclick=async()=>{
       directoryHandle=oldDirectory;labelsDirectoryHandle=oldLabelsDirectory;
       setLabelsSourceLabel(oldLabelsSource);setSaveDirectory(oldSaveDirectory);setExampleMode(wasExample);
     }
-    if(e.name!=="AbortError"){status(`Folder error: ${e.message}`);alert(`Could not open working folder:\n${e.message}`);}
+    if(e.name!=="AbortError")status(`Folder error: ${e.message}`);
   }
 };
 els.welcomeOpenFolderBtn.onclick=()=>els.openDirBtn.click();
