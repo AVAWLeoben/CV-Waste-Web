@@ -3971,6 +3971,57 @@ function modelClassesMatchDataset(){
   return modelClassNames.every((name,i)=>name.trim()===String(classNames[i]??"").trim());
 }
 
+// Model class IDs must never be silently replaced with dataset class 0.
+// Where names exist, map by name so differing class orders are handled correctly.
+// When the runtime exposes no model class metadata, keep valid numeric IDs,
+// but tell the annotator that class ID alignment has not been verified.
+function normalizePredictionClassName(value){
+  return String(value??"").trim().toLowerCase().replace(/[\s_-]+/g,"");
+}
+function resolvePredictionDatasetClass(entry){
+  const raw=Number(entry?.ann?.[0]);
+  if(!Number.isInteger(raw)||raw<0)return {id:null,reason:`Invalid model class ID: ${raw}`};
+
+  const modelName=modelClassNames[raw];
+  const candidates=[modelName,entry?.name].filter(name=>typeof name==="string"&&name.trim());
+  for(const name of candidates){
+    const key=normalizePredictionClassName(name);
+    const matches=[];
+    classNames.forEach((datasetName,index)=>{
+      if(normalizePredictionClassName(datasetName)===key)matches.push(index);
+    });
+    if(matches.length===1)return {id:matches[0],method:"name",raw};
+    if(matches.length>1)return {id:null,reason:`Dataset class name “${name}” is ambiguous`,raw};
+  }
+
+  if(!modelClassNames.length&&raw<classNames.length){
+    return {id:raw,method:"numeric-unverified",raw};
+  }
+
+  return {id:null,raw,reason:
+    `Model class ${raw}${candidates.length?` (“${candidates[0]}”)`:""} has no matching dataset class`};
+}
+function mapPredictionEntries(entries){
+  const mapped=[],skipped=[];
+  let numericUnverified=0;
+  for(const entry of entries){
+    const match=resolvePredictionDatasetClass(entry);
+    if(match.id===null){skipped.push(match.reason);continue}
+    if(match.method==="numeric-unverified")numericUnverified++;
+    mapped.push({...entry,ann:[match.id,...entry.ann.slice(1)]});
+  }
+  return {mapped,skipped,numericUnverified};
+}
+function rawPredictionClassSummary(entries){
+  const counts=new Map();
+  for(const e of entries){
+    const id=e.ann?.[0];
+    counts.set(id,(counts.get(id)||0)+1);
+  }
+  return [...counts.entries()].sort((a,b)=>Number(a[0])-Number(b[0]))
+    .map(([id,n])=>`${id}: ${n}`).join(", ")||"none";
+}
+
 async function loadCurrentModel(){
   if(!currentModelFile){
     currentModel=null;
@@ -4294,20 +4345,29 @@ async function runYolo(append=false){
     }
     hideLoading();
 
-    const classesMatch=modelClassesMatchDataset();
-    if(!classesMatch){
-      // Whole-image inference with a class-mismatched model defaults every
-      // generated annotation to dataset class 0.
-      for(const e of entries)e.ann[0]=0;
+    // Log raw model output separately from editable dataset annotations.
+    // This lets us distinguish an actual one-class model output from a UI mapping issue.
+    console.info(`CV Waste Web raw YOLO class distribution: ${rawPredictionClassSummary(entries)}`,
+      {modelClassNames, datasetClassNames:classNames});
+    const mapping=mapPredictionEntries(entries);
+    if(mapping.skipped.length){
+      console.warn("CV Waste Web: skipped predictions with unmapped class names:",mapping.skipped);
+    }
+    if(entries.length&&!mapping.mapped.length){
+      throw new Error(`The model predicted ${entries.length} object(s), but none of their classes could be mapped to dataset classes. `+
+        `Check the Classes dialog or class_names.txt. First issue: ${mapping.skipped[0]}`);
+    }
+    if(mapping.numericUnverified){
+      console.warn("CV Waste Web: model class names unavailable; numeric class IDs were used. Verify dataset class order before saving annotations.");
     }
 
     pushUndo();
     if(!append){r.annotations=[];r.confidences=[]}
-    for(const e of entries){r.annotations.push(e.ann);r.confidences.push(e.score)}
+    for(const e of mapping.mapped){r.annotations.push(e.ann);r.confidences.push(e.score)}
     selected=null;selectedVertex=null;multi.clear();markDirty();refreshAll();
-    status(classesMatch
-      ? `LiteRT YOLO: ${entries.length} ${objectWord(entries.length!==1)} added with model-predicted classes.`
-      : `LiteRT YOLO: ${entries.length} ${objectWord(entries.length!==1)} added as dataset class 0 because model and dataset classes differ.`);
+    status(`LiteRT YOLO: ${mapping.mapped.length} ${objectWord(mapping.mapped.length!==1)} added using predicted classes.`+
+      (mapping.skipped.length?` ${mapping.skipped.length} skipped: no dataset class-name match. Check Classes.`:"")+
+      (mapping.numericUnverified?` WARNING: model class names unavailable; numeric IDs used (verify class order).`:""));
   }catch(e){
     try{hideLoading()}catch{}
     const detail=e?.stack||e?.message||String(e);
@@ -4334,19 +4394,31 @@ async function singleClickPrediction(x,y){
     hideLoading();
     candidates.sort((a,b)=>b.score-a.score);
     if(!candidates.length){status(`No predicted ${objectWord()} contains that point.`);return}
-    pushUndo();const e=candidates[0];
-    const classesMatch=modelClassesMatchDataset();
-    if(!classesMatch){
-      // ALT+Click with a class-mismatched model uses the class currently
-      // selected by the annotator rather than the model's class ID.
+    const e=candidates[0];
+    const match=resolvePredictionDatasetClass(e);
+    let classMessage="";
+    if(match.id===null){
+      // Manual override remains available, but never silently changes an
+      // unknown model class into the default selected dataset class (often 0).
       const selectedClass=clamp(Math.trunc(Number(els.classSelect.value)||0),0,Math.max(0,classNames.length-1));
+      const selectedName=classNames[selectedClass]??"unnamed";
+      if(!confirm(`${match.reason}.\n\nAssign this prediction manually to selected dataset class `+
+          `${selectedClass} (${selectedName}) instead?`)){
+        status(`ALT+Click: ${match.reason}. No annotation added.`);
+        return;
+      }
       e.ann[0]=selectedClass;
+      classMessage=`manually assigned dataset class ${selectedClass} (${selectedName})`;
+    }else{
+      e.ann[0]=match.id;
+      classMessage=match.method==="numeric-unverified"
+        ?`model numeric class ID ${match.id} (verify dataset class order)`
+        :`model-predicted class ${match.id} (${classNames[match.id]})`;
     }
+    pushUndo();
     r.annotations.push(e.ann);r.confidences.push(e.score);selected=r.annotations.length-1;selectedVertex=null;multi.clear();
     markDirty();refreshAll();
-    status(classesMatch
-      ? `ALT+Click: added model-predicted ${objectWord()} class.`
-      : `ALT+Click: added ${objectWord()} as selected dataset class ${e.ann[0]} (${classNames[e.ann[0]]??"unnamed"}).`);
+    status(`ALT+Click: added ${objectWord()} using ${classMessage}.`);
   }catch(e){
     try{hideLoading()}catch{}
     status(`Single-click prediction error: ${e?.stack||e?.message||e}`);
